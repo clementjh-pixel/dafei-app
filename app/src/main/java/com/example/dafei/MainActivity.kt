@@ -68,7 +68,7 @@ data class CutOrderData(
     val tickets: List<TicketData>,
     val sizesOrder: List<String>,
     val rawRows: List<RowInputData>,
-    val rowBundles: Map<Int, List<Int>>
+    val rowBundles: Map<Int, Map<Int, Int>>
 )
 
 // ================= 主界面 =================
@@ -214,15 +214,13 @@ fun GenerateScreen(onGenerate: (CutOrderData) -> Unit) {
     val selectedSizes = remember { mutableStateOf(listOf("S", "M", "L", "XL")) }
     val rowList = remember { mutableStateListOf<RowInputData>() }
 
-    var showAddSizeDialog by remember { mutableStateOf(false) }
-    var newSizeText by remember { mutableStateOf("") }
-    
     var showSelectSizeDialog by remember { mutableStateOf(false) }
     var tempSelectedSizes by remember { mutableStateOf(listOf<String>()) }
     
     var showSelectColorDialog by remember { mutableStateOf(false) }
     var rowIndexToReplaceColor by remember { mutableStateOf<Int?>(null) }
     var newColorInput by remember { mutableStateOf("") }
+    var newSizeText by remember { mutableStateOf("") }
 
     Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -324,13 +322,13 @@ fun GenerateScreen(onGenerate: (CutOrderData) -> Unit) {
                 var totalQty = 0
                 
                 var globalBundleNo = 1
-                val rowBundles = mutableMapOf<Int, MutableList<Int>>()
+                val rowBundles = mutableMapOf<Int, MutableMap<Int, Int>>()
 
                 selectedSizes.value.forEachIndexed { colIndex, size ->
                     rowList.forEachIndexed { rowIdx, row ->
                         val qty = row.quantities["$size-$colIndex"]?.toIntOrNull() ?: 0
                         if (row.color.isNotBlank() && qty > 0) {
-                            rowBundles.getOrPut(rowIdx) { mutableListOf() }.add(globalBundleNo)
+                            rowBundles.getOrPut(rowIdx) { mutableMapOf() }[colIndex] = globalBundleNo
 
                             val no = "$styleNo-$size-" + String.format("%02d", globalBundleNo)
                             newTickets.add(TicketData(
@@ -339,7 +337,6 @@ fun GenerateScreen(onGenerate: (CutOrderData) -> Unit) {
                                 quantity = qty, bundleNo = globalBundleNo
                             ))
                             totalQty += qty
-                            
                             globalBundleNo++
                         }
                     }
@@ -556,6 +553,8 @@ fun DetailScreen(order: CutOrderData, onBack: () -> Unit) {
 
         Text("${order.dateStr}    款号: ${order.styleNo}    床号: ${order.bedNo}", fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 12.dp))
         
+        // 提示左右滑动
+        Text("💡 表格如果没显示全，可以左右滑动查看", fontSize = 11.sp, color = Color.Gray, modifier = Modifier.padding(bottom = 4.dp))
         TableView(order = order)
 
         Spacer(Modifier.height(24.dp))
@@ -571,50 +570,67 @@ fun DetailScreen(order: CutOrderData, onBack: () -> Unit) {
     }
 }
 
+// ================= 裁床单表格 (支持横向滑动) =================
 @Composable
 fun TableView(order: CutOrderData) {
     val sizeTotals = mutableMapOf<Int, Int>()
     val border = BorderStroke(1.dp, Color.Black)
-    val cellModifier = Modifier.border(border).padding(8.dp)
-
-    Column(Modifier.fillMaxWidth().border(border)) {
-        Row(Modifier.fillMaxWidth()) {
-            Box(Modifier.weight(1.2f).then(cellModifier)) { Text("颜色", fontWeight = FontWeight.Bold) }
-            Box(Modifier.weight(1.5f).then(cellModifier)) { Text("扎号", fontWeight = FontWeight.Bold) }
-            order.sizesOrder.forEachIndexed { colIndex, size ->
-                Box(Modifier.weight(1f).then(cellModifier)) { Text(size, fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.Center)) }
-            }
-            Box(Modifier.weight(1f).then(cellModifier)) { Text("合计", fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.Center)) }
-        }
-
-        order.rawRows.forEachIndexed { rowIdx, row ->
-            var rowTotal = 0
-            val bundles = order.rowBundles[rowIdx] ?: emptyList()
-            val bundleStr = bundles.joinToString(",") { String.format("%02d", it) }
-
-            Row(Modifier.fillMaxWidth()) {
-                Box(Modifier.weight(1.2f).then(cellModifier)) { Text(row.color) }
-                Box(Modifier.weight(1.5f).then(cellModifier)) { Text(bundleStr, color = Color(0xFF1565C0), fontWeight = FontWeight.Bold) }
-                order.sizesOrder.forEachIndexed { colIndex, _ ->
-                    val qty = row.quantities["${order.sizesOrder[colIndex]}-$colIndex"]?.toIntOrNull() ?: 0
-                    rowTotal += qty
-                    sizeTotals[colIndex] = (sizeTotals[colIndex] ?: 0) + qty
-                    Box(Modifier.weight(1f).then(cellModifier)) { Text(if (qty > 0) qty.toString() else "", modifier = Modifier.align(Alignment.Center)) }
+    val cellModifier = Modifier.border(border).padding(horizontal = 4.dp, vertical = 8.dp)
+    
+    // 给表格加横向滚动
+    Box(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+        Column(Modifier.border(border)) {
+            // 表头
+            Row(Modifier.background(Color(0xFFF5F5F5))) {
+                Box(Modifier.width(70.dp).then(cellModifier)) { Text("颜色", fontWeight = FontWeight.Bold, fontSize = 12.sp) }
+                order.sizesOrder.forEachIndexed { colIndex, size ->
+                    Box(Modifier.width(36.dp).then(cellModifier)) { Text("扎号", fontWeight = FontWeight.Bold, fontSize = 11.sp, modifier = Modifier.align(Alignment.Center)) }
+                    Box(Modifier.width(40.dp).then(cellModifier)) { Text(size, fontWeight = FontWeight.Bold, fontSize = 12.sp, modifier = Modifier.align(Alignment.Center)) }
                 }
-                Box(Modifier.weight(1f).then(cellModifier)) { Text("${rowTotal}件", modifier = Modifier.align(Alignment.Center)) }
+                Box(Modifier.width(50.dp).then(cellModifier)) { Text("合计", fontWeight = FontWeight.Bold, fontSize = 12.sp, modifier = Modifier.align(Alignment.Center)) }
             }
-        }
 
-        Row(Modifier.fillMaxWidth()) {
-            Box(Modifier.weight(1.2f).then(cellModifier)) { Text("合计", fontWeight = FontWeight.Bold) }
-            Box(Modifier.weight(1.5f).then(cellModifier)) { Text("", fontWeight = FontWeight.Bold) }
-            var grandTotal = 0
-            order.sizesOrder.forEachIndexed { colIndex, _ ->
-                val st = sizeTotals[colIndex] ?: 0
-                grandTotal += st
-                Box(Modifier.weight(1f).then(cellModifier)) { Text("${st}件", modifier = Modifier.align(Alignment.Center)) }
+            // 数据行
+            order.rawRows.forEachIndexed { rowIdx, row ->
+                var rowTotal = 0
+                Row(Modifier.border(border)) {
+                    Box(Modifier.width(70.dp).then(cellModifier)) { Text(row.color, fontSize = 12.sp) }
+                    order.sizesOrder.forEachIndexed { colIndex, _ ->
+                        val qty = row.quantities["${order.sizesOrder[colIndex]}-$colIndex"]?.toIntOrNull() ?: 0
+                        val bundleNo = order.rowBundles[rowIdx]?.get(colIndex)
+                        
+                        // 扎号列
+                        Box(Modifier.width(36.dp).then(cellModifier)) { 
+                            if (bundleNo != null) {
+                                Text(String.format("%02d", bundleNo), color = Color(0xFF1565C0), fontWeight = FontWeight.Bold, fontSize = 12.sp, modifier = Modifier.align(Alignment.Center))
+                            }
+                        }
+                        
+                        // 数量列
+                        rowTotal += qty
+                        sizeTotals[colIndex] = (sizeTotals[colIndex] ?: 0) + qty
+                        Box(Modifier.width(40.dp).then(cellModifier)) { 
+                            Text(if (qty > 0) qty.toString() else "", fontSize = 12.sp, modifier = Modifier.align(Alignment.Center)) 
+                        }
+                    }
+                    Box(Modifier.width(50.dp).then(cellModifier)) { Text("${rowTotal}件", fontSize = 12.sp, modifier = Modifier.align(Alignment.Center)) }
+                }
             }
-            Box(Modifier.weight(1f).then(cellModifier)) { Text("${grandTotal}件", fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.Center)) }
+
+            // 合计行
+            Row(Modifier.background(Color(0xFFF5F5F5))) {
+                Box(Modifier.width(70.dp).then(cellModifier)) { Text("合计", fontWeight = FontWeight.Bold, fontSize = 12.sp) }
+                var grandTotal = 0
+                order.sizesOrder.forEachIndexed { colIndex, _ ->
+                    val st = sizeTotals[colIndex] ?: 0
+                    grandTotal += st
+                    // 空白扎号列
+                    Box(Modifier.width(36.dp).then(cellModifier)) { Text("", fontSize = 12.sp) }
+                    // 码数总计
+                    Box(Modifier.width(40.dp).then(cellModifier)) { Text("${st}件", fontWeight = FontWeight.Bold, fontSize = 12.sp, modifier = Modifier.align(Alignment.Center)) }
+                }
+                Box(Modifier.width(50.dp).then(cellModifier)) { Text("${grandTotal}件", fontWeight = FontWeight.Bold, fontSize = 12.sp, modifier = Modifier.align(Alignment.Center)) }
+            }
         }
     }
 }
