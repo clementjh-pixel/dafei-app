@@ -201,7 +201,8 @@ fun GenerateScreen(onGenerate: (CutOrderData) -> Unit) {
     var showAddSizeDialog by remember { mutableStateOf(false) }
     var newSizeText by remember { mutableStateOf("") }
 
-    var presetColors by remember { mutableStateOf(prefs.getStringSet("colors", setOf("黑色", "白色", "杏色"))?.toMutableList() ?: mutableListOf()) }
+    // 这里修正了 val 的类型
+    val presetColors = remember { mutableStateOf(prefs.getStringSet("colors", setOf("黑色", "白色", "杏色"))?.toMutableList() ?: mutableListOf()) }
     var showAddColorDialog by remember { mutableStateOf(false) }
     var newColorText by remember { mutableStateOf("") }
 
@@ -340,9 +341,9 @@ fun GenerateScreen(onGenerate: (CutOrderData) -> Unit) {
             text = { OutlinedTextField(value = newColorText, onValueChange = { newColorText = it }, label = { Text("如: 藏青") }) },
             confirmButton = {
                 TextButton(onClick = {
-                    if (newColorText.isNotBlank() && !presetColors.contains(newColorText)) {
-                        presetColors.add(newColorText)
-                        prefs.edit().putStringSet("colors", presetColors.toSet()).apply()
+                    if (newColorText.isNotBlank() && !presetColors.value.contains(newColorText)) {
+                        presetColors.value.add(newColorText)
+                        prefs.edit().putStringSet("colors", presetColors.value.toSet()).apply()
                     }
                     newColorText = ""
                     showAddColorDialog = false
@@ -358,7 +359,7 @@ fun GenerateScreen(onGenerate: (CutOrderData) -> Unit) {
             title = { Text("选择颜色") },
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState())) {
-                    presetColors.forEach { color ->
+                    presetColors.value.forEach { color ->
                         Text(
                             text = color,
                             modifier = Modifier.fillMaxWidth().clickable {
