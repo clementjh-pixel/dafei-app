@@ -33,6 +33,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -132,9 +134,26 @@ fun MainAppScreen(connectedDeviceName: String?, onConnectClick: () -> Unit) {
     val context = LocalContext.current
     val activity = context as MainActivity
     
-    var currentTab by remember { mutableIntStateOf(0) }
-    val historyOrders = remember { mutableStateListOf<CutOrderData>() }
+    // --- 数据持久化 ---
+    val gson = remember { Gson() }
+    val prefs = remember { context.getSharedPreferences("dafei_orders", Context.MODE_PRIVATE) }
     
+    // 初始化历史裁床单（从本地读取）
+    val historyOrders = remember {
+        val json = prefs.getString("history_orders", null)
+        if (json != null) {
+            val type = object : TypeToken<List<CutOrderData>>() {}.type
+            gson.fromJson<List<CutOrderData>>(json, type).toMutableStateList()
+        } else {
+            mutableStateListOf()
+        }
+    }
+
+    fun saveHistory() {
+        prefs.edit().putString("history_orders", gson.toJson(historyOrders)).apply()
+    }
+
+    var currentTab by remember { mutableIntStateOf(0) }
     var showBluetoothDialog by remember { mutableStateOf(false) }
     val pairedDevices = remember { mutableStateOf<List<BluetoothDevice>>(emptyList()) }
 
@@ -164,12 +183,17 @@ fun MainAppScreen(connectedDeviceName: String?, onConnectClick: () -> Unit) {
     ) { padding ->
         Box(Modifier.padding(padding)) {
             if (currentTab == 0) {
-                GenerateScreen { newOrder ->
+                GenerateScreen(historyOrders) { newOrder ->
                     historyOrders.add(0, newOrder)
+                    saveHistory()
                     currentTab = 1
                 }
             } else {
-                HistoryListScreen(historyOrders)
+                HistoryListScreen(historyOrders) { indexToRemove ->
+                    historyOrders.removeAt(indexToRemove)
+                    saveHistory() 
+                    Toast.makeText(context, "已删除", Toast.LENGTH_SHORT).show()
+                }
             }
         }
 
@@ -199,14 +223,22 @@ fun MainAppScreen(connectedDeviceName: String?, onConnectClick: () -> Unit) {
 // ================= 打菲生成界面 =================
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun GenerateScreen(onGenerate: (CutOrderData) -> Unit) {
+fun GenerateScreen(historyOrders: List<CutOrderData>, onGenerate: (CutOrderData) -> Unit) {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("dafei_prefs", Context.MODE_PRIVATE) }
 
     var customer by remember { mutableStateOf("") }
     var styleNo by remember { mutableStateOf("") }
-    var bedNo by remember { mutableStateOf("") }
     var dateStr by remember { mutableStateOf(SimpleDateFormat("yy-MM-dd", Locale.CHINA).format(Date())) }
+    var bedNo by remember { mutableStateOf("") }
+    
+    // 智能计算床号：当前月最大床号 + 1
+    LaunchedEffect(dateStr, historyOrders) {
+        val currentMonthPrefix = dateStr.take(5) // 例如 "24-10"
+        val monthOrders = historyOrders.filter { it.dateStr.startsWith(currentMonthPrefix) }
+        val maxBedNo = monthOrders.mapNotNull { it.bedNo.toIntOrNull() }.maxOrNull() ?: 0
+        bedNo = (maxBedNo + 1).toString()
+    }
 
     val presetSizes = remember { mutableStateOf(prefs.getStringSet("sizes", setOf("S", "M", "L", "XL"))?.toMutableList() ?: mutableListOf()) }
     val presetColors = remember { mutableStateOf(prefs.getStringSet("colors", setOf("黑色", "白色", "杏色"))?.toMutableList() ?: mutableListOf()) }
@@ -316,6 +348,7 @@ fun GenerateScreen(onGenerate: (CutOrderData) -> Unit) {
         Button(
             onClick = {
                 if (styleNo.isBlank()) { Toast.makeText(context, "款号不能为空", Toast.LENGTH_SHORT).show(); return@Button }
+                if (bedNo.isBlank()) { Toast.makeText(context, "床号不能为空", Toast.LENGTH_SHORT).show(); return@Button }
                 
                 val cutId = "C" + System.currentTimeMillis()
                 val newTickets = mutableListOf<TicketData>()
@@ -353,6 +386,11 @@ fun GenerateScreen(onGenerate: (CutOrderData) -> Unit) {
                         sizesOrder = selectedSizes.value, rawRows = finalRawRows, rowBundles = rowBundles
                     ))
                     Toast.makeText(context, "已保存：${finalTickets.size}张标签", Toast.LENGTH_SHORT).show()
+                    
+                    // 生成后清空表单
+                    rowList.clear()
+                    styleNo = ""
+                    customer = ""
                 } else {
                     Toast.makeText(context, "没有有效件数", Toast.LENGTH_SHORT).show()
                 }
@@ -507,29 +545,52 @@ fun GenerateScreen(onGenerate: (CutOrderData) -> Unit) {
 
 // ================= 历史记录与裁床单详情 =================
 @Composable
-fun HistoryListScreen(historyOrders: List<CutOrderData>) {
+fun HistoryListScreen(historyOrders: List<CutOrderData>, onDelete: (Int) -> Unit) {
     if (historyOrders.isEmpty()) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("暂无历史数据", color = Color.Gray) }
         return
     }
     var selectedOrder by remember { mutableStateOf<CutOrderData?>(null) }
+    var orderToDelete by remember { mutableStateOf<Pair<Int, CutOrderData>?>(null) }
 
     if (selectedOrder != null) {
         DetailScreen(order = selectedOrder!!) { selectedOrder = null }
     } else {
         LazyColumn(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(historyOrders) { order ->
+            items(historyOrders.size) { index ->
+                val order = historyOrders[index]
                 Card(onClick = { selectedOrder = order }, modifier = Modifier.fillMaxWidth(), elevation = CardDefaults.cardElevation(4.dp)) {
                     Column(Modifier.padding(16.dp)) {
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text("款号: ${order.styleNo} / 床号: ${order.bedNo}", fontWeight = FontWeight.Bold)
-                            Text("${order.totalQty} 件", color = Color(0xFF1565C0), fontWeight = FontWeight.Bold)
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Text("款号: ${order.styleNo}  床号: ${order.bedNo}", fontWeight = FontWeight.Bold)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("${order.totalQty} 件", color = Color(0xFF1565C0), fontWeight = FontWeight.Bold)
+                                Spacer(Modifier.width(12.dp))
+                                Text("删除", color = Color.Red, fontSize = 13.sp, modifier = Modifier.clickable { 
+                                    orderToDelete = Pair(index, order) 
+                                })
+                            }
                         }
                         Text("客户: ${order.customer.ifBlank { "无" }}  |  日期: ${order.dateStr}", fontSize = 12.sp, color = Color.Gray, modifier = Modifier.padding(top = 4.dp))
                     }
                 }
             }
         }
+    }
+
+    if (orderToDelete != null) {
+        AlertDialog(
+            onDismissRequest = { orderToDelete = null },
+            title = { Text("删除确认") },
+            text = { Text("确定删除裁床单【${orderToDelete!!.second.styleNo}】吗？") },
+            confirmButton = {
+                TextButton(onClick = {
+                    onDelete(orderToDelete!!.first)
+                    orderToDelete = null
+                }) { Text("删除", color = Color.Red) }
+            },
+            dismissButton = { TextButton(onClick = { orderToDelete = null }) { Text("取消") } }
+        )
     }
 }
 
@@ -553,7 +614,6 @@ fun DetailScreen(order: CutOrderData, onBack: () -> Unit) {
 
         Text("${order.dateStr}    款号: ${order.styleNo}    床号: ${order.bedNo}", fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 12.dp))
         
-        // 提示左右滑动
         Text("💡 表格如果没显示全，可以左右滑动查看", fontSize = 11.sp, color = Color.Gray, modifier = Modifier.padding(bottom = 4.dp))
         TableView(order = order)
 
@@ -570,17 +630,14 @@ fun DetailScreen(order: CutOrderData, onBack: () -> Unit) {
     }
 }
 
-// ================= 裁床单表格 (支持横向滑动) =================
 @Composable
 fun TableView(order: CutOrderData) {
     val sizeTotals = mutableMapOf<Int, Int>()
     val border = BorderStroke(1.dp, Color.Black)
     val cellModifier = Modifier.border(border).padding(horizontal = 4.dp, vertical = 8.dp)
     
-    // 给表格加横向滚动
     Box(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
         Column(Modifier.border(border)) {
-            // 表头
             Row(Modifier.background(Color(0xFFF5F5F5))) {
                 Box(Modifier.width(70.dp).then(cellModifier)) { Text("颜色", fontWeight = FontWeight.Bold, fontSize = 12.sp) }
                 order.sizesOrder.forEachIndexed { colIndex, size ->
@@ -590,7 +647,6 @@ fun TableView(order: CutOrderData) {
                 Box(Modifier.width(50.dp).then(cellModifier)) { Text("合计", fontWeight = FontWeight.Bold, fontSize = 12.sp, modifier = Modifier.align(Alignment.Center)) }
             }
 
-            // 数据行
             order.rawRows.forEachIndexed { rowIdx, row ->
                 var rowTotal = 0
                 Row(Modifier.border(border)) {
@@ -599,14 +655,12 @@ fun TableView(order: CutOrderData) {
                         val qty = row.quantities["${order.sizesOrder[colIndex]}-$colIndex"]?.toIntOrNull() ?: 0
                         val bundleNo = order.rowBundles[rowIdx]?.get(colIndex)
                         
-                        // 扎号列
                         Box(Modifier.width(36.dp).then(cellModifier)) { 
                             if (bundleNo != null) {
                                 Text(String.format("%02d", bundleNo), color = Color(0xFF1565C0), fontWeight = FontWeight.Bold, fontSize = 12.sp, modifier = Modifier.align(Alignment.Center))
                             }
                         }
                         
-                        // 数量列
                         rowTotal += qty
                         sizeTotals[colIndex] = (sizeTotals[colIndex] ?: 0) + qty
                         Box(Modifier.width(40.dp).then(cellModifier)) { 
@@ -617,16 +671,13 @@ fun TableView(order: CutOrderData) {
                 }
             }
 
-            // 合计行
             Row(Modifier.background(Color(0xFFF5F5F5))) {
                 Box(Modifier.width(70.dp).then(cellModifier)) { Text("合计", fontWeight = FontWeight.Bold, fontSize = 12.sp) }
                 var grandTotal = 0
                 order.sizesOrder.forEachIndexed { colIndex, _ ->
                     val st = sizeTotals[colIndex] ?: 0
                     grandTotal += st
-                    // 空白扎号列
                     Box(Modifier.width(36.dp).then(cellModifier)) { Text("", fontSize = 12.sp) }
-                    // 码数总计
                     Box(Modifier.width(40.dp).then(cellModifier)) { Text("${st}件", fontWeight = FontWeight.Bold, fontSize = 12.sp, modifier = Modifier.align(Alignment.Center)) }
                 }
                 Box(Modifier.width(50.dp).then(cellModifier)) { Text("${grandTotal}件", fontWeight = FontWeight.Bold, fontSize = 12.sp, modifier = Modifier.align(Alignment.Center)) }
@@ -675,23 +726,15 @@ fun TicketPreviewScreen(tickets: List<TicketData>, order: CutOrderData, onBack: 
                     border = BorderStroke(1.dp, Color.Gray)
                 ) {
                     Column(Modifier.fillMaxSize().padding(12.dp)) {
-                        // 1. 款号
                         Text("款号: ${ticket.styleNo}", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                        // 2. 扎号
                         Text("扎号: ${String.format("%02d", ticket.bundleNo)}", fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top=4.dp))
-                        // 3. 码数
                         Text("码数: ${ticket.size}", fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top=4.dp))
-                        // 4. 数量
                         Text("数量: ${ticket.quantity}", fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top=4.dp))
-                        // 5. 颜色
                         Text("颜色: ${ticket.color}", fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top=4.dp))
                         
-                        // 虚线分割
                         Text("------------------------", fontSize = 10.sp, color = Color.Gray, modifier = Modifier.padding(vertical = 6.dp))
                         
-                        // 6. 总扎/总件
                         Text("共 ${ticket.totalBundles} 扎, 总 ${ticket.totalQuantity} 件", fontSize = 11.sp, color = Color.DarkGray)
-                        // 7. 客户/日期
                         Text("${ticket.customer}  ${ticket.dateStr}", fontSize = 11.sp, color = Color.DarkGray, modifier = Modifier.padding(top = 2.dp))
                     }
                 }
