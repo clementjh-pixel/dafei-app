@@ -67,8 +67,8 @@ data class CutOrderData(
     val totalQty: Int,
     val tickets: List<TicketData>,
     val sizesOrder: List<String>,
-    val rawRows: List<RowInputData>, // 保存原始输入行，保证颜色不合并
-    val rowBundles: Map<Int, List<Int>> // 每一行对应的扎号
+    val rawRows: List<RowInputData>,
+    val rowBundles: Map<Int, List<Int>>
 )
 
 // ================= 主界面 =================
@@ -323,7 +323,6 @@ fun GenerateScreen(onGenerate: (CutOrderData) -> Unit) {
                 val newTickets = mutableListOf<TicketData>()
                 var totalQty = 0
                 
-                // 全局扎号，从1开始，遇到空/0跳过
                 var globalBundleNo = 1
                 val rowBundles = mutableMapOf<Int, MutableList<Int>>()
 
@@ -331,7 +330,6 @@ fun GenerateScreen(onGenerate: (CutOrderData) -> Unit) {
                     rowList.forEachIndexed { rowIdx, row ->
                         val qty = row.quantities["$size-$colIndex"]?.toIntOrNull() ?: 0
                         if (row.color.isNotBlank() && qty > 0) {
-                            // 记录行对应的扎号
                             rowBundles.getOrPut(rowIdx) { mutableListOf() }.add(globalBundleNo)
 
                             val no = "$styleNo-$size-" + String.format("%02d", globalBundleNo)
@@ -342,7 +340,7 @@ fun GenerateScreen(onGenerate: (CutOrderData) -> Unit) {
                             ))
                             totalQty += qty
                             
-                            globalBundleNo++ // 只有成功生成扎才顺移
+                            globalBundleNo++
                         }
                     }
                 }
@@ -350,7 +348,6 @@ fun GenerateScreen(onGenerate: (CutOrderData) -> Unit) {
                 if (newTickets.isNotEmpty()) {
                     val totalBundles = globalBundleNo - 1
                     val finalTickets = newTickets.map { it.copy(totalBundles = totalBundles, totalQuantity = totalQty) }
-                    // 保存原始数据，防止后续修改影响历史单
                     val finalRawRows = rowList.map { it.copy(quantities = it.quantities.toMutableMap()) }
                     
                     onGenerate(CutOrderData(
@@ -581,7 +578,6 @@ fun TableView(order: CutOrderData) {
     val cellModifier = Modifier.border(border).padding(8.dp)
 
     Column(Modifier.fillMaxWidth().border(border)) {
-        // 表头
         Row(Modifier.fillMaxWidth()) {
             Box(Modifier.weight(1.2f).then(cellModifier)) { Text("颜色", fontWeight = FontWeight.Bold) }
             Box(Modifier.weight(1.5f).then(cellModifier)) { Text("扎号", fontWeight = FontWeight.Bold) }
@@ -591,7 +587,6 @@ fun TableView(order: CutOrderData) {
             Box(Modifier.weight(1f).then(cellModifier)) { Text("合计", fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.Center)) }
         }
 
-        // 数据行（按输入行展示，不合并颜色）
         order.rawRows.forEachIndexed { rowIdx, row ->
             var rowTotal = 0
             val bundles = order.rowBundles[rowIdx] ?: emptyList()
@@ -610,7 +605,6 @@ fun TableView(order: CutOrderData) {
             }
         }
 
-        // 合计行
         Row(Modifier.fillMaxWidth()) {
             Box(Modifier.weight(1.2f).then(cellModifier)) { Text("合计", fontWeight = FontWeight.Bold) }
             Box(Modifier.weight(1.5f).then(cellModifier)) { Text("", fontWeight = FontWeight.Bold) }
@@ -673,13 +667,15 @@ fun TicketPreviewScreen(tickets: List<TicketData>, order: CutOrderData, onBack: 
                         Text("码数: ${ticket.size}", fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top=4.dp))
                         // 4. 数量
                         Text("数量: ${ticket.quantity}", fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top=4.dp))
+                        // 5. 颜色
+                        Text("颜色: ${ticket.color}", fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top=4.dp))
                         
                         // 虚线分割
                         Text("------------------------", fontSize = 10.sp, color = Color.Gray, modifier = Modifier.padding(vertical = 6.dp))
                         
-                        // 5. 总扎/总件
+                        // 6. 总扎/总件
                         Text("共 ${ticket.totalBundles} 扎, 总 ${ticket.totalQuantity} 件", fontSize = 11.sp, color = Color.DarkGray)
-                        // 6. 客户/日期
+                        // 7. 客户/日期
                         Text("${ticket.customer}  ${ticket.dateStr}", fontSize = 11.sp, color = Color.DarkGray, modifier = Modifier.padding(top = 2.dp))
                     }
                 }
