@@ -521,10 +521,8 @@ fun TicketPreviewScreen(tickets: List<TicketData>, order: CutOrderData, onBack: 
             ) { Text(if (isPrinting) "发送中..." else "确认打印") }
         }
 
-        // 浏览真实的 40x80 尺寸列表
         LazyColumn(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             items(tickets) { ticket ->
-                // 宽 40，高 80，比例 1:2
                 Card(
                     modifier = Modifier.fillMaxWidth(0.7f).aspectRatio(0.5f).align(Alignment.CenterHorizontally),
                     elevation = CardDefaults.cardElevation(6.dp),
@@ -532,13 +530,11 @@ fun TicketPreviewScreen(tickets: List<TicketData>, order: CutOrderData, onBack: 
                     border = BorderStroke(1.dp, Color.Gray)
                 ) {
                     Column(Modifier.fillMaxSize().padding(12.dp)) {
-                        // 顶部客户与日期
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text(ticket.customer.ifBlank { "内部单" }, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                             Text(ticket.dateStr, fontSize = 10.sp, color = Color.Gray)
                         }
                         Spacer(Modifier.height(4.dp))
-                        // 款号与床号
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text("款号: ${ticket.styleNo}", fontSize = 12.sp)
                             Text("床号: ${ticket.bedNo}", fontSize = 12.sp)
@@ -546,12 +542,10 @@ fun TicketPreviewScreen(tickets: List<TicketData>, order: CutOrderData, onBack: 
                         
                         Spacer(Modifier.weight(1f))
                         
-                        // 大号菲号
                         Text(ticket.ticketNo, fontWeight = FontWeight.ExtraBold, fontSize = 22.sp, modifier = Modifier.align(Alignment.CenterHorizontally))
                         
                         Spacer(Modifier.weight(1f))
                         
-                        // 底部颜色、码数、件数
                         HorizontalDivider(modifier = Modifier.padding(bottom = 6.dp))
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
                             Text("${ticket.color} / ${ticket.size}码", fontSize = 13.sp)
