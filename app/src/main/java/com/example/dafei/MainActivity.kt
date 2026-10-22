@@ -10,6 +10,7 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -76,7 +77,6 @@ class MainActivity : ComponentActivity() {
     
     @SuppressLint("MissingPermission")
     private fun showDeviceListDialog() {
-        // 交由 Compose 内部的 MainScreen 处理弹窗状态，这里只保留权限校验
         if (bluetoothAdapter?.isEnabled == false) {
             Toast.makeText(this, "请先开启手机蓝牙", Toast.LENGTH_SHORT).show()
         }
@@ -103,7 +103,6 @@ fun MainScreen(
     var currentTab by remember { mutableIntStateOf(0) }
     val history = remember { mutableStateListOf<TicketData>() }
     
-    // 控制蓝牙设备列表弹窗的显示
     var showBluetoothDialog by remember { mutableStateOf(false) }
     val pairedDevices = remember { mutableStateOf<List<BluetoothDevice>>(emptyList()) }
 
@@ -120,10 +119,7 @@ fun MainScreen(
                             showBluetoothDialog = true
                         }
                     }) {
-                        Text(
-                            text = connectedDeviceName ?: "连接打印机",
-                            color = MaterialTheme.colorScheme.primary
-                        )
+                        Text(text = connectedDeviceName ?: "连接打印机")
                     }
                 }
             )
@@ -166,7 +162,6 @@ fun MainScreen(
             }
         }
 
-        // 纯 Compose 写法的设备列表弹窗
         if (showBluetoothDialog) {
             AlertDialog(
                 onDismissRequest = { showBluetoothDialog = false },
@@ -178,11 +173,11 @@ fun MainScreen(
                                 text = device.name ?: "未知设备",
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(vertical = 12.dp)
                                     .clickable {
                                         activity.connectToDevice(device)
                                         showBluetoothDialog = false
                                     }
+                                    .padding(vertical = 12.dp)
                             )
                         }
                     }
