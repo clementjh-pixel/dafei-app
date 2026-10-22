@@ -249,10 +249,6 @@ fun GenerateScreen(onGenerate: (CutOrderData) -> Unit) {
                 TextButton(onClick = { showAddColorDialog = true }) { Text("预设颜色") }
             }
         }
-        
-        Button(onClick = { rowList.add(RowInputData()) }, modifier = Modifier.fillMaxWidth().height(40.dp), colors = ButtonDefaults.buttonColors(containerColor = Color.LightGray, contentColor = Color.Black)) {
-            Text("+ 添加一行颜色")
-        }
 
         Spacer(Modifier.height(8.dp))
 
@@ -260,45 +256,53 @@ fun GenerateScreen(onGenerate: (CutOrderData) -> Unit) {
         Row(Modifier.fillMaxWidth().background(Color(0xFFF0F0F0)).padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("颜色(点击选)", modifier = Modifier.weight(1.5f).padding(start = 8.dp), fontSize = 12.sp, fontWeight = FontWeight.Bold)
             selectedSizes.value.forEach { size ->
-                Text(size, modifier = Modifier.weight(1f), textAlign = TextAlign.Center, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                // 稍微加宽一点件数输入框
+                Text(size, modifier = Modifier.weight(1.2f), textAlign = TextAlign.Center, fontSize = 12.sp, fontWeight = FontWeight.Bold)
             }
             Spacer(Modifier.width(36.dp))
         }
 
         // 数据行
         rowList.forEachIndexed { index, row ->
-            Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                // 颜色选择框
-                Box(
-                    modifier = Modifier.weight(1.5f).height(50.dp).border(1.dp, Color.Gray, MaterialTheme.shapes.extraSmall)
-                        .clickable {
-                            rowIdToReplaceColor = row.id
-                            showSelectColorDialog = true
-                        }.padding(4.dp),
-                    contentAlignment = Alignment.CenterStart
-                ) {
-                    Text(if (row.color.isEmpty()) "选择颜色" else row.color, fontSize = 14.sp, color = if (row.color.isEmpty()) Color.Gray else Color.Black)
-                }
+            key(row.id) {
+                Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    // 颜色选择框
+                    Box(
+                        modifier = Modifier.weight(1.5f).height(50.dp).border(1.dp, Color.Gray, MaterialTheme.shapes.extraSmall)
+                            .clickable {
+                                rowIdToReplaceColor = row.id
+                                showSelectColorDialog = true
+                            }.padding(4.dp),
+                        contentAlignment = Alignment.CenterStart
+                    ) {
+                        Text(if (row.color.isEmpty()) "选择" else row.color, fontSize = 14.sp, color = if (row.color.isEmpty()) Color.Gray else Color.Black)
+                    }
 
-                // 件数输入
-                selectedSizes.value.forEach { size ->
-                    val qtyValue = row.quantities[size] ?: ""
-                    OutlinedTextField(
-                        value = qtyValue,
-                        onValueChange = { newVal ->
-                            val newMap = row.quantities.toMutableMap()
-                            newMap[size] = newVal
-                            rowList[index] = row.copy(quantities = newMap)
-                        },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        modifier = Modifier.weight(1f).padding(horizontal = 2.dp).height(50.dp),
-                        singleLine = true
-                    )
-                }
-                IconButton(onClick = { rowList.removeAt(index) }, modifier = Modifier.width(36.dp)) {
-                    Text("X", color = Color.Red, fontWeight = FontWeight.Bold)
+                    // 件数输入
+                    selectedSizes.value.forEach { size ->
+                        val qtyValue = row.quantities[size] ?: ""
+                        OutlinedTextField(
+                            value = qtyValue,
+                            onValueChange = { newVal ->
+                                val newMap = row.quantities.toMutableMap()
+                                newMap[size] = newVal
+                                rowList[index] = row.copy(quantities = newMap)
+                            },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.weight(1.2f).padding(horizontal = 2.dp).height(50.dp),
+                            singleLine = true
+                        )
+                    }
+                    IconButton(onClick = { rowList.removeAt(index) }, modifier = Modifier.width(36.dp)) {
+                        Text("X", color = Color.Red, fontWeight = FontWeight.Bold)
+                    }
                 }
             }
+        }
+
+        // 把添加按钮放到底部
+        Button(onClick = { rowList.add(RowInputData()) }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp).height(40.dp), colors = ButtonDefaults.buttonColors(containerColor = Color.LightGray, contentColor = Color.Black)) {
+            Text("+ 添加一行颜色")
         }
 
         Spacer(Modifier.height(24.dp))
