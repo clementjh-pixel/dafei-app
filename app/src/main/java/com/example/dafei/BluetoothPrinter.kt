@@ -24,7 +24,6 @@ object BluetoothPrinter {
 
     fun isConnected(): Boolean = socket?.isConnected == true
 
-    // 发送 TSPL 指令打印 40x80mm 的标签
     fun printTicket(
         customer: String,
         styleNo: String,
@@ -32,28 +31,33 @@ object BluetoothPrinter {
         color: String,
         size: String,
         qty: Int,
-        bedNo: String,  // 新增床号
-        dateStr: String // 新增日期
+        bedNo: String,
+        dateStr: String,
+        bundleNo: Int,         // 全局扎号
+        totalBundles: Int,     // 总扎数
+        totalQuantity: Int     // 总件数
     ) {
         if (outputStream == null) return
 
+        // 40x80mm TSPL 指令
         val command = "SIZE 40 mm, 80 mm\r\n" +
                 "GAP 2 mm, 0 mm\r\n" +
                 "DIRECTION 1\r\n" +
                 "CLS\r\n" +
-                // 第一行：客户与日期
-                "TEXT 10, 10, \"TSS24.BF2\", 0, 1, 1, \"客: " + customer + "\"\r\n" +
-                "TEXT 230, 10, \"TSS24.BF2\", 0, 1, 1, \"" + dateStr + "\"\r\n" +
-                // 第二行：款号与床号
-                "TEXT 10, 45, \"TSS24.BF2\", 0, 1, 1, \"款: " + styleNo + "\"\r\n" +
-                "TEXT 230, 45, \"TSS24.BF2\", 0, 1, 1, \"床: " + bedNo + "\"\r\n" +
-                // 第三行：大号菲号
-                "TEXT 10, 90, \"TSS24.BF2\", 0, 2, 2, \"菲号: " + ticketNo + "\"\r\n" +
-                // 第四行：颜色与码数
-                "TEXT 10, 150, \"TSS24.BF2\", 0, 1, 1, \"颜色: " + color + "\"\r\n" +
-                "TEXT 230, 150, \"TSS24.BF2\", 0, 1, 1, \"码: " + size + "\"\r\n" +
-                // 第五行：件数（加粗）
-                "TEXT 10, 190, \"TSS24.BF2\", 0, 1, 1, \"件数: " + qty + "件\"\r\n" +
+                // 第一行：款号
+                "TEXT 10, 15, \"TSS24.BF2\", 0, 1, 1, \"款号: " + styleNo + "\"\r\n" +
+                // 第二行：扎号
+                "TEXT 10, 55, \"TSS24.BF2\", 0, 1, 1, \"扎号: " + String.format("%02d", bundleNo) + "\"\r\n" +
+                // 第三行：码数
+                "TEXT 10, 95, \"TSS24.BF2\", 0, 1, 1, \"码数: " + size + "\"\r\n" +
+                // 第四行：数量
+                "TEXT 10, 135, \"TSS24.BF2\", 0, 1, 1, \"数量: " + qty + "\"\r\n" +
+                // 虚线分割
+                "TEXT 10, 175, \"TSS16.BF2\", 0, 1, 1, \"----------------------\"\r\n" +
+                // 第五行：总共扎数、总件数（小字体）
+                "TEXT 10, 215, \"TSS16.BF2\", 0, 1, 1, \"共 " + totalBundles + " 扎, 总 " + totalQuantity + " 件\"\r\n" +
+                // 第六行：客户、日期（小字体）
+                "TEXT 10, 250, \"TSS16.BF2\", 0, 1, 1, \"" + customer + "  " + dateStr + "\"\r\n" +
                 "PRINT 1, 1\r\n"
 
         try {
