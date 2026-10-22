@@ -60,7 +60,6 @@ data class CutOrderData(
     val matrix: Map<String, Map<String, Int>>
 )
 
-// 用于表格输入的临时行数据
 data class RowInputData(
     val color: String = "",
     val quantities: MutableMap<String, String> = mutableMapOf()
@@ -203,17 +202,12 @@ fun GenerateScreen(onGenerate: (CutOrderData) -> Unit) {
     var bedNo by remember { mutableStateOf("") }
     var dateStr by remember { mutableStateOf(SimpleDateFormat("yy-MM-dd", Locale.CHINA).format(Date())) }
 
-    // 预设库
     val presetSizes = remember { mutableStateOf(prefs.getStringSet("sizes", setOf("S", "M", "L", "XL"))?.toMutableList() ?: mutableListOf()) }
     val presetColors = remember { mutableStateOf(prefs.getStringSet("colors", setOf("黑色", "白色", "杏色"))?.toMutableList() ?: mutableListOf()) }
 
-    // 当前表格选中的码数
     val selectedSizes = remember { mutableStateOf(listOf("S", "M", "L", "XL")) }
-    
-    // 行数据列表
     val rowList = remember { mutableStateListOf(RowInputData()) }
 
-    // 弹窗控制
     var showAddSizeDialog by remember { mutableStateOf(false) }
     var newSizeText by remember { mutableStateOf("") }
     
@@ -246,7 +240,6 @@ fun GenerateScreen(onGenerate: (CutOrderData) -> Unit) {
 
         Spacer(Modifier.height(8.dp))
 
-        // 表头
         Row(Modifier.fillMaxWidth().background(Color(0xFFF0F0F0)).padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("颜色", modifier = Modifier.weight(1.5f).padding(start = 8.dp), fontSize = 12.sp, fontWeight = FontWeight.Bold)
             selectedSizes.value.forEach { size ->
@@ -255,11 +248,9 @@ fun GenerateScreen(onGenerate: (CutOrderData) -> Unit) {
             Spacer(Modifier.width(36.dp))
         }
 
-        // 数据行
         rowList.forEachIndexed { index, row ->
             key(index) {
                 Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    // 颜色选择框
                     Box(
                         modifier = Modifier.weight(1.5f).height(50.dp).border(1.dp, Color.Gray, MaterialTheme.shapes.extraSmall)
                             .clickable {
@@ -272,7 +263,6 @@ fun GenerateScreen(onGenerate: (CutOrderData) -> Unit) {
                         Text(if (row.color.isEmpty()) "选择" else row.color, fontSize = 14.sp, color = if (row.color.isEmpty()) Color.Gray else Color.Black)
                     }
 
-                    // 件数输入（带向后自动填充功能）
                     selectedSizes.value.forEachIndexed { colIndex, size ->
                         val currentKey = "$size-$colIndex"
                         val qtyValue = row.quantities[currentKey] ?: ""
@@ -284,7 +274,6 @@ fun GenerateScreen(onGenerate: (CutOrderData) -> Unit) {
                                     val newMap = row.quantities.toMutableMap()
                                     newMap[currentKey] = newVal
                                     
-                                    // 自动填充右侧格子
                                     if (newVal.isNotEmpty()) {
                                         for (i in colIndex + 1 until selectedSizes.value.size) {
                                             newMap["${selectedSizes.value[i]}-$i"] = newVal
@@ -299,7 +288,6 @@ fun GenerateScreen(onGenerate: (CutOrderData) -> Unit) {
                         )
                     }
 
-                    // 删除按钮
                     IconButton(onClick = { rowList.removeAt(index) }, modifier = Modifier.width(36.dp)) {
                         Text("X", color = Color.Red, fontWeight = FontWeight.Bold)
                     }
@@ -307,7 +295,6 @@ fun GenerateScreen(onGenerate: (CutOrderData) -> Unit) {
             }
         }
 
-        // 添加按钮（点击直接弹颜色选择）
         Button(
             onClick = { 
                 rowList.add(RowInputData())
@@ -332,7 +319,6 @@ fun GenerateScreen(onGenerate: (CutOrderData) -> Unit) {
                 var seq = 1
                 var totalQty = 0
 
-                // 处理数据矩阵
                 val tempMatrix = mutableMapOf<String, MutableMap<String, Int>>()
 
                 selectedSizes.value.forEachIndexed { colIndex, size ->
@@ -343,7 +329,6 @@ fun GenerateScreen(onGenerate: (CutOrderData) -> Unit) {
                             newTickets.add(TicketData(no, cutId, customer, styleNo, bedNo, dateStr, row.color, size, qty))
                             totalQty += qty
                             
-                            // 累加进明细表（修复重复码数被合并的bug）
                             val colorMap = tempMatrix.getOrPut(row.color) { mutableMapOf() }
                             colorMap[size] = (colorMap[size] ?: 0) + qty
                         }
@@ -367,8 +352,6 @@ fun GenerateScreen(onGenerate: (CutOrderData) -> Unit) {
         
         Spacer(Modifier.height(40.dp))
     }
-
-    // --- 弹窗区域 ---
 
     if (showSelectSizeDialog) {
         AlertDialog(
@@ -422,11 +405,9 @@ fun GenerateScreen(onGenerate: (CutOrderData) -> Unit) {
         )
     }
 
-    // 颜色选择弹窗
     if (showSelectColorDialog) {
         AlertDialog(
             onDismissRequest = { 
-                // 如果取消，且是刚添加的空行，就把它移除，防止留空行
                 val index = rowIndexToReplaceColor
                 if (index != null && index in rowList.indices && rowList[index].color.isEmpty()) {
                     rowList.removeAt(index)
