@@ -1,15 +1,15 @@
+package com.example.dafei
+
 import android.Manifest
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
-import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -17,9 +17,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import java.text.SimpleDateFormat
-import java.util.*
 
 class MainActivity : ComponentActivity() {
     private val bluetoothAdapter = BluetoothAdapter.getDefaultAdapter()
@@ -57,26 +56,30 @@ class MainActivity : ComponentActivity() {
     }
 
     @SuppressLint("MissingPermission")
-    private fun showDeviceListDialog() {
-        val pairedDevices = bluetoothAdapter?.bondedDevices
-        if (pairedDevices.isNullOrEmpty()) {
-            Toast.makeText(this, "请在手机系统设置中先配对蓝牙打印机", Toast.LENGTH_LONG).show()
-            return
+    fun getPairedDevices(): List<BluetoothDevice> {
+        return try {
+            bluetoothAdapter?.bondedDevices?.toList() ?: emptyList()
+        } catch (e: Exception) {
+            emptyList()
         }
+    }
 
-        val builder = AlertDialog.Builder(this)
-        builder.setTitle("选择打印机")
-        val deviceNames = pairedDevices.map { it.name ?: "未知设备" }.toTypedArray()
-        builder.setItems(deviceNames) { _, which ->
-            val device: BluetoothDevice = pairedDevices.toList()[which]
-            if (BluetoothPrinter.connect(device)) {
-                connectedDeviceName = device.name
-                Toast.makeText(this, "连接成功: ${device.name}", Toast.LENGTH_SHORT).show()
-            } else {
-                Toast.makeText(this, "连接失败", Toast.LENGTH_SHORT).show()
-            }
+    @SuppressLint("MissingPermission")
+    fun connectToDevice(device: BluetoothDevice) {
+        if (BluetoothPrinter.connect(device)) {
+            connectedDeviceName = device.name ?: "未知设备"
+            Toast.makeText(this, "连接成功: $connectedDeviceName", Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(this, "连接失败", Toast.LENGTH_SHORT).show()
         }
-        builder.show()
+    }
+    
+    @SuppressLint("MissingPermission")
+    private fun showDeviceListDialog() {
+        // 交由 Compose 内部的 MainScreen 处理弹窗状态，这里只保留权限校验
+        if (bluetoothAdapter?.isEnabled == false) {
+            Toast.makeText(this, "请先开启手机蓝牙", Toast.LENGTH_SHORT).show()
+        }
     }
 }
 
@@ -95,15 +98,28 @@ fun MainScreen(
     connectedDeviceName: String?,
     onConnectClick: () -> Unit
 ) {
+    val context = LocalContext.current
+    val activity = context as MainActivity
     var currentTab by remember { mutableIntStateOf(0) }
     val history = remember { mutableStateListOf<TicketData>() }
+    
+    // 控制蓝牙设备列表弹窗的显示
+    var showBluetoothDialog by remember { mutableStateOf(false) }
+    val pairedDevices = remember { mutableStateOf<List<BluetoothDevice>>(emptyList()) }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text(if (currentTab == 0) "打菲助手" else "历史记录") },
                 actions = {
-                    TextButton(onClick = onConnectClick) {
+                    TextButton(onClick = {
+                        if (activity.getPairedDevices().isEmpty()) {
+                            Toast.makeText(context, "请先在手机系统设置里配对打印机", Toast.LENGTH_LONG).show()
+                        } else {
+                            pairedDevices.value = activity.getPairedDevices()
+                            showBluetoothDialog = true
+                        }
+                    }) {
                         Text(
                             text = connectedDeviceName ?: "连接打印机",
                             color = MaterialTheme.colorScheme.primary
@@ -136,8 +152,47 @@ fun MainScreen(
                     currentTab = 1
                 }
             } else {
-                HistoryScreen(history)
+                HistoryScreen(history) { ticket ->
+                    if (BluetoothPrinter.isConnected()) {
+                        BluetoothPrinter.printTicket(
+                            ticket.customer, ticket.styleNo, ticket.ticketNo,
+                            ticket.color, ticket.size, ticket.quantity
+                        )
+                        Toast.makeText(context, "已发送打印指令", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(context, "请先连接打印机", Toast.LENGTH_SHORT).show()
+                    }
+                }
             }
+        }
+
+        // 纯 Compose 写法的设备列表弹窗
+        if (showBluetoothDialog) {
+            AlertDialog(
+                onDismissRequest = { showBluetoothDialog = false },
+                title = { Text("选择打印机") },
+                text = {
+                    Column {
+                        pairedDevices.value.forEach { device ->
+                            Text(
+                                text = device.name ?: "未知设备",
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 12.dp)
+                                    .clickable {
+                                        activity.connectToDevice(device)
+                                        showBluetoothDialog = false
+                                    }
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { showBluetoothDialog = false }) {
+                        Text("取消")
+                    }
+                }
+            )
         }
     }
 }
@@ -187,7 +242,7 @@ fun GenerateScreen(onGenerate: (List<TicketData>) -> Unit) {
 }
 
 @Composable
-fun HistoryScreen(history: List<TicketData>) {
+fun HistoryScreen(history: List<TicketData>, onPrintClick: (TicketData) -> Unit) {
     if (history.isEmpty()) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text("暂无菲票")
@@ -204,16 +259,7 @@ fun HistoryScreen(history: List<TicketData>) {
                     Text("颜色: ${ticket.color} | 尺码: ${ticket.size} | 件数: ${ticket.quantity}")
                     
                     Button(
-                        onClick = {
-                            if (BluetoothPrinter.isConnected()) {
-                                BluetoothPrinter.printTicket(
-                                    ticket.customer, ticket.styleNo, ticket.ticketNo,
-                                    ticket.color, ticket.size, ticket.quantity
-                                )
-                            } else {
-                                Toast.makeText(null, "请先连接打印机", Toast.LENGTH_SHORT).show()
-                            }
-                        },
+                        onClick = { onPrintClick(ticket) },
                         modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
                     ) {
                         Text("打印这张")
