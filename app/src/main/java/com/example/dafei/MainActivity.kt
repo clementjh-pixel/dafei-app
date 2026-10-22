@@ -15,6 +15,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -45,7 +46,10 @@ data class TicketData(
     val dateStr: String,
     val color: String,
     val size: String,
-    val quantity: Int
+    val quantity: Int,
+    val bundleNo: Int,
+    val totalBundles: Int = 0,
+    val totalQuantity: Int = 0
 )
 
 data class CutOrderData(
@@ -57,7 +61,8 @@ data class CutOrderData(
     val time: Long,
     val totalQty: Int,
     val tickets: List<TicketData>,
-    val matrix: Map<String, Map<String, Int>>
+    val sizesOrder: List<String>,
+    val matrix: Map<String, Map<Int, Int>>
 )
 
 data class RowInputData(
@@ -206,7 +211,7 @@ fun GenerateScreen(onGenerate: (CutOrderData) -> Unit) {
     val presetColors = remember { mutableStateOf(prefs.getStringSet("colors", setOf("黑色", "白色", "杏色"))?.toMutableList() ?: mutableListOf()) }
 
     val selectedSizes = remember { mutableStateOf(listOf("S", "M", "L", "XL")) }
-    val rowList = remember { mutableStateListOf(RowInputData()) }
+    val rowList = remember { mutableStateListOf<RowInputData>() }
 
     var showAddSizeDialog by remember { mutableStateOf(false) }
     var newSizeText by remember { mutableStateOf("") }
@@ -315,33 +320,43 @@ fun GenerateScreen(onGenerate: (CutOrderData) -> Unit) {
                 
                 val cutId = "C" + System.currentTimeMillis()
                 val newTickets = mutableListOf<TicketData>()
-                val matrix = mutableMapOf<String, Map<String, Int>>()
-                var seq = 1
+                val matrix = mutableMapOf<String, Map<Int, Int>>()
                 var totalQty = 0
-
-                val tempMatrix = mutableMapOf<String, MutableMap<String, Int>>()
+                
+                // 全局扎号，从1开始，遇到空/0跳过
+                var globalBundleNo = 1
 
                 selectedSizes.value.forEachIndexed { colIndex, size ->
                     rowList.forEach { row ->
                         val qty = row.quantities["$size-$colIndex"]?.toIntOrNull() ?: 0
                         if (row.color.isNotBlank() && qty > 0) {
-                            val no = "$styleNo-$size-" + String.format("%02d", seq++)
-                            newTickets.add(TicketData(no, cutId, customer, styleNo, bedNo, dateStr, row.color, size, qty))
+                            val no = "$styleNo-$size-" + String.format("%02d", globalBundleNo)
+                            
+                            newTickets.add(TicketData(
+                                ticketNo = no, cutId = cutId, customer = customer, styleNo = styleNo,
+                                bedNo = bedNo, dateStr = dateStr, color = row.color, size = size,
+                                quantity = qty, bundleNo = globalBundleNo
+                            ))
                             totalQty += qty
                             
-                            val colorMap = tempMatrix.getOrPut(row.color) { mutableMapOf() }
-                            colorMap[size] = (colorMap[size] ?: 0) + qty
+                            val colorMap = matrix.getOrPut(row.color) { mutableMapOf() }
+                            (colorMap as MutableMap)[colIndex] = (colorMap[colIndex] ?: 0) + qty
+                            
+                            globalBundleNo++ // 只有成功生成扎才顺移
                         }
                     }
                 }
 
-                tempMatrix.forEach { (color, qtyMap) ->
-                    matrix[color] = qtyMap
-                }
-
                 if (newTickets.isNotEmpty()) {
-                    onGenerate(CutOrderData(cutId, customer, styleNo, bedNo, dateStr, System.currentTimeMillis(), totalQty, newTickets, matrix))
-                    Toast.makeText(context, "已保存：${newTickets.size}张标签", Toast.LENGTH_SHORT).show()
+                    val totalBundles = globalBundleNo - 1
+                    val finalTickets = newTickets.map { it.copy(totalBundles = totalBundles, totalQuantity = totalQty) }
+                    
+                    onGenerate(CutOrderData(
+                        id = cutId, customer = customer, styleNo = styleNo, bedNo = bedNo, dateStr = dateStr,
+                        time = System.currentTimeMillis(), totalQty = totalQty, tickets = finalTickets,
+                        sizesOrder = selectedSizes.value, matrix = matrix
+                    ))
+                    Toast.makeText(context, "已保存：${finalTickets.size}张标签", Toast.LENGTH_SHORT).show()
                 } else {
                     Toast.makeText(context, "没有有效件数", Toast.LENGTH_SHORT).show()
                 }
@@ -359,15 +374,37 @@ fun GenerateScreen(onGenerate: (CutOrderData) -> Unit) {
             title = { Text("选择填写的码数") },
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState())) {
+                    Text("已选(按顺序，可重复):", fontSize = 12.sp, color = Color.Gray)
+                    Row(
+                        Modifier.fillMaxWidth().background(Color(0xFFF5F5F5)).padding(8.dp).horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        tempSelectedSizes.forEachIndexed { idx, s ->
+                            Row(
+                                Modifier.background(Color.White, MaterialTheme.shapes.small).border(1.dp, Color.Gray, MaterialTheme.shapes.small).padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(s, fontSize = 14.sp)
+                                Spacer(Modifier.width(4.dp))
+                                Text("x", color = Color.Red, fontWeight = FontWeight.Bold, modifier = Modifier.clickable {
+                                    tempSelectedSizes = tempSelectedSizes.toMutableList().also { it.removeAt(idx) }
+                                })
+                            }
+                        }
+                    }
+                    
+                    Spacer(Modifier.height(12.dp))
+                    Text("点击下方码数即可添加到上方：", fontSize = 12.sp, color = Color.Gray)
+                    
                     presetSizes.value.forEach { size ->
                         Row(
                             verticalAlignment = Alignment.CenterVertically, 
                             modifier = Modifier.fillMaxWidth().clickable {
-                                if (tempSelectedSizes.contains(size)) tempSelectedSizes = tempSelectedSizes - size else tempSelectedSizes = tempSelectedSizes + size
+                                tempSelectedSizes = tempSelectedSizes + size
                             }.padding(vertical = 8.dp)
                         ) {
-                            Checkbox(checked = tempSelectedSizes.contains(size), onCheckedChange = null)
-                            Text(size, fontSize = 16.sp, modifier = Modifier.padding(start = 8.dp).weight(1f))
+                            Text("+ ", fontSize = 16.sp, color = Color(0xFF1565C0))
+                            Text(size, fontSize = 16.sp, modifier = Modifier.weight(1f))
                         }
                     }
                     
@@ -520,7 +557,7 @@ fun DetailScreen(order: CutOrderData, onBack: () -> Unit) {
 
         Text("${order.dateStr}    款号: ${order.styleNo}    床号: ${order.bedNo}", fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 12.dp))
         
-        TableView(matrix = order.matrix)
+        TableView(order = order)
 
         Spacer(Modifier.height(24.dp))
 
@@ -536,10 +573,9 @@ fun DetailScreen(order: CutOrderData, onBack: () -> Unit) {
 }
 
 @Composable
-fun TableView(matrix: Map<String, Map<String, Int>>) {
-    val allSizes = matrix.values.flatMap { it.keys }.distinct().sorted()
+fun TableView(order: CutOrderData) {
     val colorTotals = mutableMapOf<String, Int>()
-    val sizeTotals = mutableMapOf<String, Int>()
+    val sizeTotals = mutableMapOf<Int, Int>()
 
     val border = BorderStroke(1.dp, Color.Black)
     val cellModifier = Modifier.border(border).padding(8.dp)
@@ -547,20 +583,20 @@ fun TableView(matrix: Map<String, Map<String, Int>>) {
     Column(Modifier.fillMaxWidth().border(border)) {
         Row(Modifier.fillMaxWidth()) {
             Box(Modifier.weight(1f).then(cellModifier)) { Text("", fontWeight = FontWeight.Bold) }
-            allSizes.forEach { size ->
+            order.sizesOrder.forEachIndexed { colIndex, size ->
                 Box(Modifier.weight(1f).then(cellModifier)) { Text(size, fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.Center)) }
             }
             Box(Modifier.weight(1f).then(cellModifier)) { Text("合计", fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.Center)) }
         }
 
-        matrix.forEach { (color, qtyMap) ->
+        order.matrix.forEach { (color, qtyMap) ->
             var rowTotal = 0
             Row(Modifier.fillMaxWidth()) {
                 Box(Modifier.weight(1f).then(cellModifier)) { Text(color) }
-                allSizes.forEach { size ->
-                    val qty = qtyMap[size] ?: 0
+                order.sizesOrder.forEachIndexed { colIndex, _ ->
+                    val qty = qtyMap[colIndex] ?: 0
                     rowTotal += qty
-                    sizeTotals[size] = (sizeTotals[size] ?: 0) + qty
+                    sizeTotals[colIndex] = (sizeTotals[colIndex] ?: 0) + qty
                     Box(Modifier.weight(1f).then(cellModifier)) { Text(if (qty > 0) qty.toString() else "", modifier = Modifier.align(Alignment.Center)) }
                 }
                 colorTotals[color] = rowTotal
@@ -571,8 +607,8 @@ fun TableView(matrix: Map<String, Map<String, Int>>) {
         Row(Modifier.fillMaxWidth()) {
             Box(Modifier.weight(1f).then(cellModifier)) { Text("合计", fontWeight = FontWeight.Bold) }
             var grandTotal = 0
-            allSizes.forEach { size ->
-                val st = sizeTotals[size] ?: 0
+            order.sizesOrder.forEachIndexed { colIndex, _ ->
+                val st = sizeTotals[colIndex] ?: 0
                 grandTotal += st
                 Box(Modifier.weight(1f).then(cellModifier)) { Text("${st}件", modifier = Modifier.align(Alignment.Center)) }
             }
@@ -581,7 +617,7 @@ fun TableView(matrix: Map<String, Map<String, Int>>) {
     }
 }
 
-// ================= 标签预览与打印界面 (40x80 专属) =================
+// ================= 标签预览与打印界面 =================
 @Composable
 fun TicketPreviewScreen(tickets: List<TicketData>, order: CutOrderData, onBack: () -> Unit) {
     val context = LocalContext.current
@@ -596,7 +632,10 @@ fun TicketPreviewScreen(tickets: List<TicketData>, order: CutOrderData, onBack: 
                     if (BluetoothPrinter.isConnected()) {
                         isPrinting = true
                         tickets.forEach { 
-                            BluetoothPrinter.printTicket(it.customer, it.styleNo, it.ticketNo, it.color, it.size, it.quantity, it.bedNo, it.dateStr) 
+                            BluetoothPrinter.printTicket(
+                                it.customer, it.styleNo, it.ticketNo, it.color, it.size, 
+                                it.quantity, it.bedNo, it.dateStr, it.bundleNo, it.totalBundles, it.totalQuantity
+                            ) 
                         }
                         Toast.makeText(context, "已发送打印指令", Toast.LENGTH_LONG).show()
                         isPrinting = false
@@ -618,27 +657,15 @@ fun TicketPreviewScreen(tickets: List<TicketData>, order: CutOrderData, onBack: 
                     border = BorderStroke(1.dp, Color.Gray)
                 ) {
                     Column(Modifier.fillMaxSize().padding(12.dp)) {
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text(ticket.customer.ifBlank { "内部单" }, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                            Text(ticket.dateStr, fontSize = 10.sp, color = Color.Gray)
-                        }
-                        Spacer(Modifier.height(4.dp))
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text("款号: ${ticket.styleNo}", fontSize = 12.sp)
-                            Text("床号: ${ticket.bedNo}", fontSize = 12.sp)
-                        }
+                        Text("款号: ${ticket.styleNo}", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        Text("扎号: ${String.format("%02d", ticket.bundleNo)}", fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top=4.dp))
+                        Text("码数: ${ticket.size}", fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top=4.dp))
+                        Text("数量: ${ticket.quantity}", fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top=4.dp))
                         
-                        Spacer(Modifier.weight(1f))
+                        Text("------------------------", fontSize = 10.sp, color = Color.Gray, modifier = Modifier.padding(vertical = 6.dp))
                         
-                        Text(ticket.ticketNo, fontWeight = FontWeight.ExtraBold, fontSize = 22.sp, modifier = Modifier.align(Alignment.CenterHorizontally))
-                        
-                        Spacer(Modifier.weight(1f))
-                        
-                        HorizontalDivider(modifier = Modifier.padding(bottom = 6.dp))
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
-                            Text("${ticket.color} / ${ticket.size}码", fontSize = 13.sp)
-                            Text("${ticket.quantity}件", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                        }
+                        Text("共 ${ticket.totalBundles} 扎, 总 ${ticket.totalQuantity} 件", fontSize = 11.sp, color = Color.DarkGray)
+                        Text("${ticket.customer}  ${ticket.dateStr}", fontSize = 11.sp, color = Color.DarkGray, modifier = Modifier.padding(top = 2.dp))
                     }
                 }
             }
