@@ -52,6 +52,11 @@ data class TicketData(
     val totalQuantity: Int = 0
 )
 
+data class RowInputData(
+    val color: String = "",
+    val quantities: MutableMap<String, String> = mutableMapOf()
+)
+
 data class CutOrderData(
     val id: String,
     val customer: String,
@@ -62,12 +67,8 @@ data class CutOrderData(
     val totalQty: Int,
     val tickets: List<TicketData>,
     val sizesOrder: List<String>,
-    val matrix: Map<String, Map<Int, Int>>
-)
-
-data class RowInputData(
-    val color: String = "",
-    val quantities: MutableMap<String, String> = mutableMapOf()
+    val rawRows: List<RowInputData>, // 保存原始输入行，保证颜色不合并
+    val rowBundles: Map<Int, List<Int>> // 每一行对应的扎号
 )
 
 // ================= 主界面 =================
@@ -320,27 +321,26 @@ fun GenerateScreen(onGenerate: (CutOrderData) -> Unit) {
                 
                 val cutId = "C" + System.currentTimeMillis()
                 val newTickets = mutableListOf<TicketData>()
-                val matrix = mutableMapOf<String, Map<Int, Int>>()
                 var totalQty = 0
                 
                 // 全局扎号，从1开始，遇到空/0跳过
                 var globalBundleNo = 1
+                val rowBundles = mutableMapOf<Int, MutableList<Int>>()
 
                 selectedSizes.value.forEachIndexed { colIndex, size ->
-                    rowList.forEach { row ->
+                    rowList.forEachIndexed { rowIdx, row ->
                         val qty = row.quantities["$size-$colIndex"]?.toIntOrNull() ?: 0
                         if (row.color.isNotBlank() && qty > 0) {
+                            // 记录行对应的扎号
+                            rowBundles.getOrPut(rowIdx) { mutableListOf() }.add(globalBundleNo)
+
                             val no = "$styleNo-$size-" + String.format("%02d", globalBundleNo)
-                            
                             newTickets.add(TicketData(
                                 ticketNo = no, cutId = cutId, customer = customer, styleNo = styleNo,
                                 bedNo = bedNo, dateStr = dateStr, color = row.color, size = size,
                                 quantity = qty, bundleNo = globalBundleNo
                             ))
                             totalQty += qty
-                            
-                            val colorMap = matrix.getOrPut(row.color) { mutableMapOf() }
-                            (colorMap as MutableMap)[colIndex] = (colorMap[colIndex] ?: 0) + qty
                             
                             globalBundleNo++ // 只有成功生成扎才顺移
                         }
@@ -350,11 +350,13 @@ fun GenerateScreen(onGenerate: (CutOrderData) -> Unit) {
                 if (newTickets.isNotEmpty()) {
                     val totalBundles = globalBundleNo - 1
                     val finalTickets = newTickets.map { it.copy(totalBundles = totalBundles, totalQuantity = totalQty) }
+                    // 保存原始数据，防止后续修改影响历史单
+                    val finalRawRows = rowList.map { it.copy(quantities = it.quantities.toMutableMap()) }
                     
                     onGenerate(CutOrderData(
                         id = cutId, customer = customer, styleNo = styleNo, bedNo = bedNo, dateStr = dateStr,
                         time = System.currentTimeMillis(), totalQty = totalQty, tickets = finalTickets,
-                        sizesOrder = selectedSizes.value, matrix = matrix
+                        sizesOrder = selectedSizes.value, rawRows = finalRawRows, rowBundles = rowBundles
                     ))
                     Toast.makeText(context, "已保存：${finalTickets.size}张标签", Toast.LENGTH_SHORT).show()
                 } else {
@@ -574,38 +576,44 @@ fun DetailScreen(order: CutOrderData, onBack: () -> Unit) {
 
 @Composable
 fun TableView(order: CutOrderData) {
-    val colorTotals = mutableMapOf<String, Int>()
     val sizeTotals = mutableMapOf<Int, Int>()
-
     val border = BorderStroke(1.dp, Color.Black)
     val cellModifier = Modifier.border(border).padding(8.dp)
 
     Column(Modifier.fillMaxWidth().border(border)) {
+        // 表头
         Row(Modifier.fillMaxWidth()) {
-            Box(Modifier.weight(1f).then(cellModifier)) { Text("", fontWeight = FontWeight.Bold) }
+            Box(Modifier.weight(1.2f).then(cellModifier)) { Text("颜色", fontWeight = FontWeight.Bold) }
+            Box(Modifier.weight(1.5f).then(cellModifier)) { Text("扎号", fontWeight = FontWeight.Bold) }
             order.sizesOrder.forEachIndexed { colIndex, size ->
                 Box(Modifier.weight(1f).then(cellModifier)) { Text(size, fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.Center)) }
             }
             Box(Modifier.weight(1f).then(cellModifier)) { Text("合计", fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.Center)) }
         }
 
-        order.matrix.forEach { (color, qtyMap) ->
+        // 数据行（按输入行展示，不合并颜色）
+        order.rawRows.forEachIndexed { rowIdx, row ->
             var rowTotal = 0
+            val bundles = order.rowBundles[rowIdx] ?: emptyList()
+            val bundleStr = bundles.joinToString(",") { String.format("%02d", it) }
+
             Row(Modifier.fillMaxWidth()) {
-                Box(Modifier.weight(1f).then(cellModifier)) { Text(color) }
+                Box(Modifier.weight(1.2f).then(cellModifier)) { Text(row.color) }
+                Box(Modifier.weight(1.5f).then(cellModifier)) { Text(bundleStr, color = Color(0xFF1565C0), fontWeight = FontWeight.Bold) }
                 order.sizesOrder.forEachIndexed { colIndex, _ ->
-                    val qty = qtyMap[colIndex] ?: 0
+                    val qty = row.quantities["${order.sizesOrder[colIndex]}-$colIndex"]?.toIntOrNull() ?: 0
                     rowTotal += qty
                     sizeTotals[colIndex] = (sizeTotals[colIndex] ?: 0) + qty
                     Box(Modifier.weight(1f).then(cellModifier)) { Text(if (qty > 0) qty.toString() else "", modifier = Modifier.align(Alignment.Center)) }
                 }
-                colorTotals[color] = rowTotal
                 Box(Modifier.weight(1f).then(cellModifier)) { Text("${rowTotal}件", modifier = Modifier.align(Alignment.Center)) }
             }
         }
 
+        // 合计行
         Row(Modifier.fillMaxWidth()) {
-            Box(Modifier.weight(1f).then(cellModifier)) { Text("合计", fontWeight = FontWeight.Bold) }
+            Box(Modifier.weight(1.2f).then(cellModifier)) { Text("合计", fontWeight = FontWeight.Bold) }
+            Box(Modifier.weight(1.5f).then(cellModifier)) { Text("", fontWeight = FontWeight.Bold) }
             var grandTotal = 0
             order.sizesOrder.forEachIndexed { colIndex, _ ->
                 val st = sizeTotals[colIndex] ?: 0
@@ -657,14 +665,21 @@ fun TicketPreviewScreen(tickets: List<TicketData>, order: CutOrderData, onBack: 
                     border = BorderStroke(1.dp, Color.Gray)
                 ) {
                     Column(Modifier.fillMaxSize().padding(12.dp)) {
+                        // 1. 款号
                         Text("款号: ${ticket.styleNo}", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        // 2. 扎号
                         Text("扎号: ${String.format("%02d", ticket.bundleNo)}", fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top=4.dp))
+                        // 3. 码数
                         Text("码数: ${ticket.size}", fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top=4.dp))
+                        // 4. 数量
                         Text("数量: ${ticket.quantity}", fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top=4.dp))
                         
+                        // 虚线分割
                         Text("------------------------", fontSize = 10.sp, color = Color.Gray, modifier = Modifier.padding(vertical = 6.dp))
                         
+                        // 5. 总扎/总件
                         Text("共 ${ticket.totalBundles} 扎, 总 ${ticket.totalQuantity} 件", fontSize = 11.sp, color = Color.DarkGray)
+                        // 6. 客户/日期
                         Text("${ticket.customer}  ${ticket.dateStr}", fontSize = 11.sp, color = Color.DarkGray, modifier = Modifier.padding(top = 2.dp))
                     }
                 }
