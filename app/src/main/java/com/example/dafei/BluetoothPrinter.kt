@@ -33,31 +33,33 @@ object BluetoothPrinter {
         qty: Int,
         bedNo: String,
         dateStr: String,
-        bundleNo: Int,         // 全局扎号
-        totalBundles: Int,     // 总扎数
-        totalQuantity: Int     // 总件数
+        bundleNo: Int,
+        totalBundles: Int,
+        totalQuantity: Int
     ) {
         if (outputStream == null) return
 
-        // 40x80mm TSPL 指令
+        // 40x80mm TSPL 指令，排版调整为 5行大字 + 虚线 + 2行小字
         val command = "SIZE 40 mm, 80 mm\r\n" +
                 "GAP 2 mm, 0 mm\r\n" +
                 "DIRECTION 1\r\n" +
                 "CLS\r\n" +
-                // 第一行：款号
-                "TEXT 10, 15, \"TSS24.BF2\", 0, 1, 1, \"款号: " + styleNo + "\"\r\n" +
-                // 第二行：扎号
-                "TEXT 10, 55, \"TSS24.BF2\", 0, 1, 1, \"扎号: " + String.format("%02d", bundleNo) + "\"\r\n" +
-                // 第三行：码数
-                "TEXT 10, 95, \"TSS24.BF2\", 0, 1, 1, \"码数: " + size + "\"\r\n" +
-                // 第四行：数量
-                "TEXT 10, 135, \"TSS24.BF2\", 0, 1, 1, \"数量: " + qty + "\"\r\n" +
+                // 1. 款号 (大字体)
+                "TEXT 10, 10, \"TSS24.BF2\", 0, 1, 1, \"款号: " + styleNo + "\"\r\n" +
+                // 2. 扎号 (大字体)
+                "TEXT 10, 45, \"TSS24.BF2\", 0, 1, 1, \"扎号: " + String.format("%02d", bundleNo) + "\"\r\n" +
+                // 3. 码数 (大字体)
+                "TEXT 10, 80, \"TSS24.BF2\", 0, 1, 1, \"码数: " + size + "\"\r\n" +
+                // 4. 数量 (大字体)
+                "TEXT 10, 115, \"TSS24.BF2\", 0, 1, 1, \"数量: " + qty + "\"\r\n" +
+                // 5. 颜色 (大字体，新加的)
+                "TEXT 10, 150, \"TSS24.BF2\", 0, 1, 1, \"颜色: " + color + "\"\r\n" +
                 // 虚线分割
-                "TEXT 10, 175, \"TSS16.BF2\", 0, 1, 1, \"----------------------\"\r\n" +
-                // 第五行：总共扎数、总件数（小字体）
+                "TEXT 10, 185, \"TSS16.BF2\", 0, 1, 1, \"----------------------\"\r\n" +
+                // 6. 总共扎数、总件数（小字体）
                 "TEXT 10, 215, \"TSS16.BF2\", 0, 1, 1, \"共 " + totalBundles + " 扎, 总 " + totalQuantity + " 件\"\r\n" +
-                // 第六行：客户、日期（小字体）
-                "TEXT 10, 250, \"TSS16.BF2\", 0, 1, 1, \"" + customer + "  " + dateStr + "\"\r\n" +
+                // 7. 客户、日期（小字体）
+                "TEXT 10, 245, \"TSS16.BF2\", 0, 1, 1, \"" + customer + "  " + dateStr + "\"\r\n" +
                 "PRINT 1, 1\r\n"
 
         try {
