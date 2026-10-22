@@ -4,6 +4,7 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
+import android.content.Context
 import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
@@ -56,7 +57,7 @@ data class CutOrderData(
     val time: Long,
     val totalQty: Int,
     val tickets: List<TicketData>,
-    val matrix: Map<String, Map<String, Int>> // 颜色 -> 码数 -> 件数
+    val matrix: Map<String, Map<String, Int>>
 )
 
 // ================= 主界面 =================
@@ -189,19 +190,25 @@ fun MainAppScreen(connectedDeviceName: String?, onConnectClick: () -> Unit) {
 @Composable
 fun GenerateScreen(onGenerate: (CutOrderData) -> Unit) {
     val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("dafei_prefs", Context.MODE_PRIVATE) }
+
     var customer by remember { mutableStateOf("") }
     var styleNo by remember { mutableStateOf("") }
     var bedNo by remember { mutableStateOf("") }
-    var dateStr by remember { mutableStateOf(SimpleDateFormat("yy 年 MM 月 dd 日", Locale.CHINA).format(Date())) }
+    var dateStr by remember { mutableStateOf(SimpleDateFormat("yy-MM-dd", Locale.CHINA).format(Date())) }
 
-    // 动态码数
     var currentSizes by remember { mutableStateOf(listOf("S", "M", "L", "XL")) }
     var showAddSizeDialog by remember { mutableStateOf(false) }
     var newSizeText by remember { mutableStateOf("") }
 
-    // 动态颜色和件数数据：颜色名 -> (码数 -> 文本)
-    val rowData = remember { mutableStateMapOf<String, MutableMap<String, String>>() }
+    var presetColors by remember { mutableStateOf(prefs.getStringSet("colors", setOf("黑色", "白色", "杏色"))?.toMutableList() ?: mutableListOf()) }
+    var showAddColorDialog by remember { mutableStateOf(false) }
     var newColorText by remember { mutableStateOf("") }
+
+    var showSelectColorDialog by remember { mutableStateOf(false) }
+    var colorToReplace by remember { mutableStateOf<String?>(null) }
+
+    val rowData = remember { mutableStateMapOf<String, MutableMap<String, String>>() }
 
     Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -219,38 +226,48 @@ fun GenerateScreen(onGenerate: (CutOrderData) -> Unit) {
             Text("颜色 / 件数", fontWeight = FontWeight.Bold, fontSize = 16.sp)
             Row {
                 TextButton(onClick = { showAddSizeDialog = true }) { Text("+ 预设码数") }
-                TextButton(onClick = { rowData[""] = mutableMapOf() }) { Text("+ 添加颜色") }
+                TextButton(onClick = { showAddColorDialog = true }) { Text("+ 预设颜色") }
             }
         }
+        
+        Button(onClick = { 
+            var emptyColorRow = ""
+            var i = 1
+            while(rowData.containsKey(emptyColorRow)) { emptyColorRow = "新颜色$i"; i++ }
+            rowData[emptyColorRow] = mutableMapOf() 
+        }, modifier = Modifier.fillMaxWidth().height(40.dp), colors = ButtonDefaults.buttonColors(containerColor = Color.LightGray, contentColor = Color.Black)) {
+            Text("+ 添加一行颜色")
+        }
 
-        // 表头
+        Spacer(Modifier.height(8.dp))
+
         Row(Modifier.fillMaxWidth().background(Color(0xFFF0F0F0)).padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("颜色", modifier = Modifier.weight(1f).padding(start = 8.dp), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            Text("颜色(点击选)", modifier = Modifier.weight(1f).padding(start = 8.dp), fontSize = 12.sp, fontWeight = FontWeight.Bold)
             currentSizes.forEach { size ->
                 Text(size, modifier = Modifier.weight(1f), textAlign = TextAlign.Center, fontSize = 12.sp, fontWeight = FontWeight.Bold)
             }
-            Spacer(Modifier.width(36.dp)) // 对齐删除按钮
+            Spacer(Modifier.width(36.dp))
         }
 
-        // 数据行
         rowData.keys.toList().forEach { colorKey ->
             Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(
-                    value = colorKey,
-                    onValueChange = { newColor ->
-                        val map = rowData.remove(colorKey)
-                        if (map != null) rowData[newColor] = map
-                    },
-                    placeholder = { Text("颜色") },
-                    modifier = Modifier.weight(1f),
-                    singleLine = true
-                )
+                Box(
+                    modifier = Modifier.weight(1f).height(50.dp).border(1.dp, Color.Gray, MaterialTheme.shapes.extraSmall)
+                        .clickable {
+                            colorToReplace = colorKey
+                            showSelectColorDialog = true
+                        }.padding(4.dp),
+                    contentAlignment = Alignment.CenterStart
+                ) {
+                    Text(if (colorKey.startsWith("新颜色")) "点击选择" else colorKey, fontSize = 14.sp, color = if (colorKey.startsWith("新颜色")) Color.Gray else Color.Black)
+                }
+
                 currentSizes.forEach { size ->
                     OutlinedTextField(
                         value = rowData[colorKey]?.get(size) ?: "",
                         onValueChange = { valMap -> rowData[colorKey]?.set(size, valMap) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        modifier = Modifier.weight(1f).padding(horizontal = 2.dp),
+                        modifier = Modifier.weight(1f).padding(horizontal = 2.dp).height(50.dp),
                         singleLine = true
                     )
                 }
@@ -274,12 +291,13 @@ fun GenerateScreen(onGenerate: (CutOrderData) -> Unit) {
                 currentSizes.forEach { size ->
                     rowData.forEach { (color, qtyMap) ->
                         val qty = qtyMap[size]?.toIntOrNull() ?: 0
-                        if (color.isNotBlank() && qty > 0) {
+                        val actualColor = if (color.startsWith("新颜色")) "未命名" else color
+                        if (actualColor.isNotBlank() && qty > 0) {
                             val no = "$styleNo-$size-" + String.format("%02d", seq++)
-                            newTickets.add(TicketData(no, cutId, customer, styleNo, bedNo, dateStr, color, size, qty))
+                            newTickets.add(TicketData(no, cutId, customer, styleNo, bedNo, dateStr, actualColor, size, qty))
                             totalQty += qty
                             
-                            val colorMatrix = matrix.getOrPut(color) { mutableMapOf() }
+                            val colorMatrix = matrix.getOrPut(actualColor) { mutableMapOf() }
                             (colorMatrix as MutableMap)[size] = qty
                         }
                     }
@@ -299,22 +317,69 @@ fun GenerateScreen(onGenerate: (CutOrderData) -> Unit) {
         Spacer(Modifier.height(40.dp))
     }
 
-    // 自定义码数弹窗
     if (showAddSizeDialog) {
         AlertDialog(
             onDismissRequest = { showAddSizeDialog = false },
-            title = { Text("添加自定义码数") },
+            title = { Text("添加码数") },
             text = { OutlinedTextField(value = newSizeText, onValueChange = { newSizeText = it.uppercase() }, label = { Text("码数 (如 2XL)") }) },
             confirmButton = {
                 TextButton(onClick = {
-                    if (newSizeText.isNotBlank() && !currentSizes.contains(newSizeText)) {
-                        currentSizes = currentSizes + newSizeText
-                    }
+                    if (newSizeText.isNotBlank() && !currentSizes.contains(newSizeText)) currentSizes = currentSizes + newSizeText
                     newSizeText = ""
                     showAddSizeDialog = false
                 }) { Text("确认") }
             },
             dismissButton = { TextButton(onClick = { showAddSizeDialog = false }) { Text("取消") } }
+        )
+    }
+
+    if (showAddColorDialog) {
+        AlertDialog(
+            onDismissRequest = { showAddColorDialog = false },
+            title = { Text("添加预设颜色") },
+            text = { OutlinedTextField(value = newColorText, onValueChange = { newColorText = it }, label = { Text("如: 藏青") }) },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (newColorText.isNotBlank() && !presetColors.contains(newColorText)) {
+                        presetColors.add(newColorText)
+                        prefs.edit().putStringSet("colors", presetColors.toSet()).apply()
+                    }
+                    newColorText = ""
+                    showAddColorDialog = false
+                }) { Text("存入预设") }
+            },
+            dismissButton = { TextButton(onClick = { showAddColorDialog = false }) { Text("取消") } }
+        )
+    }
+
+    if (showSelectColorDialog) {
+        AlertDialog(
+            onDismissRequest = { showSelectColorDialog = false },
+            title = { Text("选择颜色") },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    presetColors.forEach { color ->
+                        Text(
+                            text = color,
+                            modifier = Modifier.fillMaxWidth().clickable {
+                                val original = colorToReplace
+                                if (original != null) {
+                                    val oldData = rowData[original]
+                                    if (rowData.containsKey(color)) {
+                                        Toast.makeText(context, "该颜色已存在", Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        rowData.remove(original)
+                                        rowData[color] = oldData ?: mutableMapOf()
+                                    }
+                                }
+                                showSelectColorDialog = false
+                            }.padding(vertical = 12.dp),
+                            fontSize = 16.sp
+                        )
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showSelectColorDialog = false }) { Text("取消") } }
         )
     }
 }
@@ -349,10 +414,8 @@ fun HistoryListScreen(historyOrders: List<CutOrderData>) {
 
 @Composable
 fun DetailScreen(order: CutOrderData, onBack: () -> Unit) {
-    val context = LocalContext.current
     var showPreview by remember { mutableStateOf(false) }
 
-    // 预览标签界面
     if (showPreview) {
         TicketPreviewScreen(order.tickets, order) { showPreview = false }
         return
@@ -367,7 +430,6 @@ fun DetailScreen(order: CutOrderData, onBack: () -> Unit) {
 
         Spacer(Modifier.height(16.dp))
 
-        // ============ 渲染你要求的表格 ============
         Text("${order.dateStr}    款号: ${order.styleNo}    床号: ${order.bedNo}", fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 12.dp))
         
         TableView(matrix = order.matrix)
@@ -391,12 +453,10 @@ fun TableView(matrix: Map<String, Map<String, Int>>) {
     val colorTotals = mutableMapOf<String, Int>()
     val sizeTotals = mutableMapOf<String, Int>()
 
-    // 边框粗细和颜色
     val border = BorderStroke(1.dp, Color.Black)
     val cellModifier = Modifier.border(border).padding(8.dp)
 
     Column(Modifier.fillMaxWidth().border(border)) {
-        // 表头行
         Row(Modifier.fillMaxWidth()) {
             Box(Modifier.weight(1f).then(cellModifier)) { Text("", fontWeight = FontWeight.Bold) }
             allSizes.forEach { size ->
@@ -405,7 +465,6 @@ fun TableView(matrix: Map<String, Map<String, Int>>) {
             Box(Modifier.weight(1f).then(cellModifier)) { Text("合计", fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.Center)) }
         }
 
-        // 数据行
         matrix.forEach { (color, qtyMap) ->
             var rowTotal = 0
             Row(Modifier.fillMaxWidth()) {
@@ -421,7 +480,6 @@ fun TableView(matrix: Map<String, Map<String, Int>>) {
             }
         }
 
-        // 底部合计行
         Row(Modifier.fillMaxWidth()) {
             Box(Modifier.weight(1f).then(cellModifier)) { Text("合计", fontWeight = FontWeight.Bold) }
             var grandTotal = 0
@@ -435,23 +493,24 @@ fun TableView(matrix: Map<String, Map<String, Int>>) {
     }
 }
 
-// ================= 标签预览与打印界面 =================
+// ================= 标签预览与打印界面 (40x80 专属) =================
 @Composable
 fun TicketPreviewScreen(tickets: List<TicketData>, order: CutOrderData, onBack: () -> Unit) {
     val context = LocalContext.current
     var isPrinting by remember { mutableStateOf(false) }
 
     Column(Modifier.fillMaxSize().background(Color(0xFFE0E0E0))) {
-        // 顶部操作栏
         Row(Modifier.fillMaxWidth().background(Color.White).padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = onBack) { Text("< 返回") }
-            Text("标签打印预览 (共${tickets.size}张)", modifier = Modifier.weight(1f), fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+            Text("标签预览 (共${tickets.size}张)", modifier = Modifier.weight(1f), fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
             Button(
                 onClick = {
                     if (BluetoothPrinter.isConnected()) {
                         isPrinting = true
-                        tickets.forEach { BluetoothPrinter.printTicket(it.customer, it.styleNo, it.ticketNo, it.color, it.size, it.quantity) }
-                        Toast.makeText(context, "正在打印，请观察打印机...", Toast.LENGTH_LONG).show()
+                        tickets.forEach { 
+                            BluetoothPrinter.printTicket(it.customer, it.styleNo, it.ticketNo, it.color, it.size, it.quantity, it.bedNo, it.dateStr) 
+                        }
+                        Toast.makeText(context, "已发送打印指令", Toast.LENGTH_LONG).show()
                         isPrinting = false
                     } else {
                         Toast.makeText(context, "请先连接蓝牙打印机", Toast.LENGTH_SHORT).show()
@@ -462,37 +521,41 @@ fun TicketPreviewScreen(tickets: List<TicketData>, order: CutOrderData, onBack: 
             ) { Text(if (isPrinting) "发送中..." else "确认打印") }
         }
 
-        // 模拟浏览器的打印预览（A4纸效果）
+        // 浏览真实的 40x80 尺寸列表
         LazyColumn(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            // 每 5 张卡片一页
-            val pages = tickets.chunked(5)
-            items(pages) { pageTickets ->
+            items(tickets) { ticket ->
+                // 宽 40，高 80，比例 1:2
                 Card(
-                    modifier = Modifier.fillMaxWidth().aspectRatio(0.707f), // A4 纸比例 1:1.414
-                    elevation = CardDefaults.cardElevation(8.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color.White)
+                    modifier = Modifier.fillMaxWidth(0.7f).aspectRatio(0.5f).align(Alignment.CenterHorizontally),
+                    elevation = CardDefaults.cardElevation(6.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    border = BorderStroke(1.dp, Color.Gray)
                 ) {
-                    Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                        pageTickets.forEach { ticket ->
-                            // 标签卡片 40x100mm 比例（宽长比 1:2.5）
-                            Box(
-                                Modifier.fillMaxWidth().weight(1f).border(1.dp, Color.Black).padding(8.dp)
-                            ) {
-                                Column(Modifier.fillMaxSize()) {
-                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                        Text(ticket.customer.ifBlank { "内部单" }, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                                        Text("款: ${ticket.styleNo}", fontSize = 12.sp)
-                                    }
-                                    Spacer(Modifier.height(8.dp))
-                                    Text("${ticket.ticketNo}", fontWeight = FontWeight.ExtraBold, fontSize = 24.sp, modifier = Modifier.align(Alignment.CenterHorizontally))
-                                    Spacer(Modifier.height(8.dp))
-                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                        Text("${ticket.color} / ${ticket.size}", fontSize = 14.sp)
-                                        Text("${ticket.quantity}件", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                                    }
-                                    Text("床号: ${ticket.bedNo} | 日期: ${ticket.dateStr}", fontSize = 10.sp, color = Color.Gray, modifier = Modifier.align(Alignment.End).padding(top = 8.dp))
-                                }
-                            }
+                    Column(Modifier.fillMaxSize().padding(12.dp)) {
+                        // 顶部客户与日期
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(ticket.customer.ifBlank { "内部单" }, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            Text(ticket.dateStr, fontSize = 10.sp, color = Color.Gray)
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        // 款号与床号
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("款号: ${ticket.styleNo}", fontSize = 12.sp)
+                            Text("床号: ${ticket.bedNo}", fontSize = 12.sp)
+                        }
+                        
+                        Spacer(Modifier.weight(1f))
+                        
+                        // 大号菲号
+                        Text(ticket.ticketNo, fontWeight = FontWeight.ExtraBold, fontSize = 22.sp, modifier = Modifier.align(Alignment.CenterHorizontally))
+                        
+                        Spacer(Modifier.weight(1f))
+                        
+                        // 底部颜色、码数、件数
+                        HorizontalDivider(modifier = Modifier.padding(bottom = 6.dp))
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
+                            Text("${ticket.color} / ${ticket.size}码", fontSize = 13.sp)
+                            Text("${ticket.quantity}件", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                         }
                     }
                 }
