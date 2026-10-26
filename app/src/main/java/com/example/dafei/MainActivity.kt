@@ -5,6 +5,8 @@ import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -42,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import java.io.ByteArrayOutputStream
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -80,6 +83,38 @@ data class CutOrderData(
     val rowBundles: Map<Int, Map<Int, Int>>,
     val imageBase64: String? = null
 )
+
+// ================= 图片处理工具 =================
+fun compressImage(bytes: ByteArray): ByteArray {
+    val options = BitmapFactory.Options()
+    options.inJustDecodeBounds = true
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+    val imageWidth = options.outWidth
+    val imageHeight = options.outHeight
+
+    var scale = 1
+    val maxDimension = 800 // 缩小尺寸
+    if (imageWidth > maxDimension || imageHeight > maxDimension) {
+        scale = (imageWidth / maxDimension).coerceAtMost(imageHeight / maxDimension)
+    }
+
+    val decodeOptions = BitmapFactory.Options()
+    decodeOptions.inSampleSize = scale
+    val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOptions)
+    
+    val outputStream = ByteArrayOutputStream()
+    bitmap.compress(Bitmap.CompressFormat.JPEG, 60, outputStream) // 60% 质量压缩
+    return outputStream.toByteArray()
+}
+
+fun decodeBase64ToBitmap(base64Str: String): Bitmap? {
+    return try {
+        val decodedBytes = Base64.decode(base64Str, Base64.DEFAULT)
+        BitmapFactory.decodeByteArray(decodedBytes, 0, decodedBytes.size)
+    } catch (e: Exception) {
+        null
+    }
+}
 
 // ================= 主界面 =================
 class MainActivity : ComponentActivity() {
@@ -323,7 +358,6 @@ fun GenerateScreen(historyOrders: List<CutOrderData>, onGenerate: (CutOrderData)
     var bedNo by remember { mutableStateOf("") }
     var imageBase64 by remember { mutableStateOf<String?>(null) }
     
-    // 新增：连床编菲选项
     var continuousBundle by remember { mutableStateOf(false) }
 
     val imagePickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
@@ -348,7 +382,6 @@ fun GenerateScreen(historyOrders: List<CutOrderData>, onGenerate: (CutOrderData)
     val presetColors = remember { mutableStateOf(prefs.getStringSet("colors", setOf("黑色", "白色", "杏色"))?.toMutableList() ?: mutableListOf()) }
 
     val selectedSizes = remember { mutableStateOf(listOf("S", "M", "L", "XL")) }
-    // 记录当前界面添加的颜色顺序
     val selectedColorsOrder = remember { mutableStateListOf<String>() }
     val rowList = remember { mutableStateListOf<RowInputData>() }
 
@@ -370,7 +403,6 @@ fun GenerateScreen(historyOrders: List<CutOrderData>, onGenerate: (CutOrderData)
             OutlinedTextField(value = dateStr, onValueChange = { dateStr = it }, label = { Text("日期") }, modifier = Modifier.weight(1f))
         }
         
-        // 连床编菲勾选框
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { continuousBundle = !continuousBundle }) {
             Checkbox(checked = continuousBundle, onCheckedChange = { continuousBundle = it })
             Text("连床编菲 (扎号接着上一床继续)", fontSize = 14.sp)
@@ -378,7 +410,6 @@ fun GenerateScreen(historyOrders: List<CutOrderData>, onGenerate: (CutOrderData)
 
         Spacer(Modifier.height(8.dp))
         
-        // 图片上传
         Box(
             Modifier.fillMaxWidth().height(100.dp).border(1.dp, Color.Gray, MaterialTheme.shapes.medium).clickable { imagePickerLauncher.launch("image/*") },
             contentAlignment = Alignment.Center
@@ -386,7 +417,7 @@ fun GenerateScreen(historyOrders: List<CutOrderData>, onGenerate: (CutOrderData)
             if (imageBase64 == null) {
                 Text("+ 点击上传裁床图片", color = Color.Gray, fontSize = 14.sp)
             } else {
-                val bmp = decodeBase64ToBitmap(imageBase64)
+                val bmp = decodeBase64ToBitmap(imageBase64!!)
                 if (bmp != null) {
                     Image(bitmap = bmp.asImageBitmap(), contentDescription = "床单图片", modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                 } else {
@@ -409,14 +440,11 @@ fun GenerateScreen(historyOrders: List<CutOrderData>, onGenerate: (CutOrderData)
 
         Spacer(Modifier.height(8.dp))
         
-        // 已选颜色快捷展示区
         if (selectedColorsOrder.isNotEmpty()) {
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 selectedColorsOrder.forEach { color ->
                     AssistChip(
-                        onClick = { 
-                            rowList.add(RowInputData(color = color)) 
-                        },
+                        onClick = { rowList.add(RowInputData(color = color)) },
                         label = { Text("+ $color", fontSize = 12.sp) }
                     )
                 }
@@ -483,17 +511,13 @@ fun GenerateScreen(historyOrders: List<CutOrderData>, onGenerate: (CutOrderData)
                 val newTickets = mutableListOf<TicketData>()
                 var totalQty = 0
                 
-                // 核心：决定初始扎号从哪里开始
                 var globalBundleNo = 1
                 if (continuousBundle) {
-                    // 查找同款号同月份的上一床
                     val currentMonthPrefix = dateStr.take(5)
                     val prevOrder = historyOrders
                         .filter { it.styleNo == styleNo && it.dateStr.startsWith(currentMonthPrefix) }
                         .maxByOrNull { it.time }
-                        
                     if (prevOrder != null) {
-                        // 找到上一床里的最大扎号，在此基础上 +1
                         val maxBundleNoInPrev = prevOrder.tickets.maxOfOrNull { it.bundleNo } ?: 0
                         globalBundleNo = maxBundleNoInPrev + 1
                     }
@@ -520,7 +544,7 @@ fun GenerateScreen(historyOrders: List<CutOrderData>, onGenerate: (CutOrderData)
                 }
 
                 if (newTickets.isNotEmpty()) {
-                    val totalBundles = newTickets.size // 这里因为可能有连床，不再是 globalBundleNo - 1
+                    val totalBundles = newTickets.size 
                     val finalTickets = newTickets.map { it.copy(totalBundles = totalBundles, totalQuantity = totalQty) }
                     val finalRawRows = rowList.map { it.copy(quantities = it.quantities.toMutableMap()) }
                     
@@ -547,7 +571,6 @@ fun GenerateScreen(historyOrders: List<CutOrderData>, onGenerate: (CutOrderData)
         Spacer(Modifier.height(40.dp))
     }
 
-    // 码数选择弹窗
     if (showSelectSizeDialog) {
         AlertDialog(
             onDismissRequest = { showSelectSizeDialog = false },
@@ -600,7 +623,6 @@ fun GenerateScreen(historyOrders: List<CutOrderData>, onGenerate: (CutOrderData)
         )
     }
 
-    // 颜色选择弹窗（改造后）
     if (showSelectColorDialog) {
         AlertDialog(
             onDismissRequest = { showSelectColorDialog = false },
@@ -610,7 +632,6 @@ fun GenerateScreen(historyOrders: List<CutOrderData>, onGenerate: (CutOrderData)
                     Text("点击颜色即可添加一行：", fontSize = 12.sp, color = Color.Gray)
                     presetColors.value.forEach { color ->
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable {
-                            // 添加一行，并直接填入颜色
                             rowList.add(RowInputData(color = color))
                             if (!selectedColorsOrder.contains(color)) selectedColorsOrder.add(color)
                             showSelectColorDialog = false
@@ -630,7 +651,6 @@ fun GenerateScreen(historyOrders: List<CutOrderData>, onGenerate: (CutOrderData)
                                     presetColors.value.add(c)
                                     prefs.edit().putStringSet("colors", presetColors.value.toSet()).apply()
                                 }
-                                // 直接添加行并填入
                                 rowList.add(RowInputData(color = c))
                                 if (!selectedColorsOrder.contains(c)) selectedColorsOrder.add(c)
                                 newColorInput = ""
@@ -739,15 +759,15 @@ fun DetailScreen(order: CutOrderData, onBack: () -> Unit) {
 }
 
 @Composable
-fun TableView(order: CutOrderData) {
-    val sizeTotals = mutableMapOf<Int, Int>()
-    val border = BorderStroke(1.dp, Color.Black)
-    val cellModifier = Modifier.border(border).padding(horizontal = 4.dp, vertical = 8.dp)
-    
-    Box(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
-        Column(Modifier.border(border)) {
-            Row(Modifier.background(Color(0xFFF5F5F5))) {
-                Box(Modifier.width(70.dp).then(cellModifier)) { Text("颜色", fontWeight = FontWeight.Bold, fontSize = 12.sp) }
-                order.sizesOrder.forEachIndexed { colIndex, size ->
-                    Box(Modifier.width(36.dp).then(cellModifier)) { Text("扎号", fontWeight = FontWeight.Bold, fontSize = 11.sp, modifier = Modifier.align(Alignment.Center)) }
-                    Box(Modifier.width(40.dp).then(cellModifier)) { Text(size, fontWeight
+fun ImageViewerDialog(base64Str: String, onDismiss: () -> Unit) {
+    val bitmap = decodeBase64ToBitmap(base64Str)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("裁床图片") },
+        text = {
+            if (bitmap != null) {
+                Image(
+                    bitmap = bitmap.asImageBitmap(),
+                    contentDescription = "大图",
+                    modifier = Modifier.fillMaxWidth().wrapContentHeight(),
+                    contentScale = ContentScale.Fit
