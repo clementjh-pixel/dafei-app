@@ -93,7 +93,7 @@ fun compressImage(bytes: ByteArray): ByteArray {
     val imageHeight = options.outHeight
 
     var scale = 1
-    val maxDimension = 800 // 缩小尺寸
+    val maxDimension = 800
     if (imageWidth > maxDimension || imageHeight > maxDimension) {
         scale = (imageWidth / maxDimension).coerceAtMost(imageHeight / maxDimension)
     }
@@ -103,7 +103,7 @@ fun compressImage(bytes: ByteArray): ByteArray {
     val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOptions)
     
     val outputStream = ByteArrayOutputStream()
-    bitmap.compress(Bitmap.CompressFormat.JPEG, 60, outputStream) // 60% 质量压缩
+    bitmap.compress(Bitmap.CompressFormat.JPEG, 60, outputStream)
     return outputStream.toByteArray()
 }
 
@@ -771,3 +771,6 @@ fun ImageViewerDialog(base64Str: String, onDismiss: () -> Unit) {
                     contentDescription = "大图",
                     modifier = Modifier.fillMaxWidth().wrapContentHeight(),
                     contentScale = ContentScale.Fit
+                )
+            } else {
+                Text("
