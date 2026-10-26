@@ -773,4 +773,122 @@ fun ImageViewerDialog(base64Str: String, onDismiss: () -> Unit) {
                     contentScale = ContentScale.Fit
                 )
             } else {
-                Text("
+                Text("图片解析失败")
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } }
+    )
+}
+
+@Composable
+fun TableView(order: CutOrderData) {
+    val sizeTotals = mutableMapOf<Int, Int>()
+    val border = BorderStroke(1.dp, Color.Black)
+    val cellModifier = Modifier.border(border).padding(horizontal = 4.dp, vertical = 8.dp)
+    
+    Box(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+        Column(Modifier.border(border)) {
+            Row(Modifier.background(Color(0xFFF5F5F5))) {
+                Box(Modifier.width(70.dp).then(cellModifier)) { Text("颜色", fontWeight = FontWeight.Bold, fontSize = 12.sp) }
+                order.sizesOrder.forEachIndexed { colIndex, size ->
+                    Box(Modifier.width(36.dp).then(cellModifier)) { Text("扎号", fontWeight = FontWeight.Bold, fontSize = 11.sp, modifier = Modifier.align(Alignment.Center)) }
+                    Box(Modifier.width(40.dp).then(cellModifier)) { Text(size, fontWeight = FontWeight.Bold, fontSize = 12.sp, modifier = Modifier.align(Alignment.Center)) }
+                }
+                Box(Modifier.width(50.dp).then(cellModifier)) { Text("合计", fontWeight = FontWeight.Bold, fontSize = 12.sp, modifier = Modifier.align(Alignment.Center)) }
+            }
+
+            order.rawRows.forEachIndexed { rowIdx, row ->
+                var rowTotal = 0
+                Row(Modifier.border(border)) {
+                    Box(Modifier.width(70.dp).then(cellModifier)) { Text(row.color, fontSize = 12.sp) }
+                    order.sizesOrder.forEachIndexed { colIndex, _ ->
+                        val qty = row.quantities["${order.sizesOrder[colIndex]}-$colIndex"]?.toIntOrNull() ?: 0
+                        val bundleNo = order.rowBundles[rowIdx]?.get(colIndex)
+                        
+                        Box(Modifier.width(36.dp).then(cellModifier)) { 
+                            if (bundleNo != null) {
+                                Text(String.format("%02d", bundleNo), color = Color(0xFF1565C0), fontWeight = FontWeight.Bold, fontSize = 12.sp, modifier = Modifier.align(Alignment.Center))
+                            }
+                        }
+                        
+                        rowTotal += qty
+                        sizeTotals[colIndex] = (sizeTotals[colIndex] ?: 0) + qty
+                        Box(Modifier.width(40.dp).then(cellModifier)) { 
+                            Text(if (qty > 0) qty.toString() else "", fontSize = 12.sp, modifier = Modifier.align(Alignment.Center)) 
+                        }
+                    }
+                    Box(Modifier.width(50.dp).then(cellModifier)) { Text("${rowTotal}件", fontSize = 12.sp, modifier = Modifier.align(Alignment.Center)) }
+                }
+            }
+
+            Row(Modifier.background(Color(0xFFF5F5F5))) {
+                Box(Modifier.width(70.dp).then(cellModifier)) { Text("合计", fontWeight = FontWeight.Bold, fontSize = 12.sp) }
+                var grandTotal = 0
+                order.sizesOrder.forEachIndexed { colIndex, _ ->
+                    val st = sizeTotals[colIndex] ?: 0
+                    grandTotal += st
+                    Box(Modifier.width(36.dp).then(cellModifier)) { Text("", fontSize = 12.sp) }
+                    Box(Modifier.width(40.dp).then(cellModifier)) { Text("${st}件", fontWeight = FontWeight.Bold, fontSize = 12.sp, modifier = Modifier.align(Alignment.Center)) }
+                }
+                Box(Modifier.width(50.dp).then(cellModifier)) { Text("${grandTotal}件", fontWeight = FontWeight.Bold, fontSize = 12.sp, modifier = Modifier.align(Alignment.Center)) }
+            }
+        }
+    }
+}
+
+// ================= 标签预览与打印界面 =================
+@Composable
+fun TicketPreviewScreen(tickets: List<TicketData>, order: CutOrderData, onBack: () -> Unit) {
+    val context = LocalContext.current
+    var isPrinting by remember { mutableStateOf(false) }
+
+    Column(Modifier.fillMaxSize().background(Color(0xFFE0E0E0))) {
+        Row(Modifier.fillMaxWidth().background(Color.White).padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = onBack) { Text("< 返回") }
+            Text("标签预览 (共${tickets.size}张)", modifier = Modifier.weight(1f), fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+            Button(
+                onClick = {
+                    if (BluetoothPrinter.isConnected()) {
+                        isPrinting = true
+                        tickets.forEach { 
+                            BluetoothPrinter.printTicket(
+                                it.customer, it.styleNo, it.ticketNo, it.color, it.size, 
+                                it.quantity, it.bedNo, it.dateStr, it.bundleNo, it.totalBundles, it.totalQuantity
+                            ) 
+                        }
+                        Toast.makeText(context, "已发送打印指令", Toast.LENGTH_LONG).show()
+                        isPrinting = false
+                    } else {
+                        Toast.makeText(context, "请先连接蓝牙打印机", Toast.LENGTH_SHORT).show()
+                    }
+                },
+                enabled = !isPrinting,
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32))
+            ) { Text(if (isPrinting) "发送中..." else "确认打印") }
+        }
+
+        LazyColumn(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            items(tickets) { ticket ->
+                Card(
+                    modifier = Modifier.fillMaxWidth(0.7f).aspectRatio(0.5f).align(Alignment.CenterHorizontally),
+                    elevation = CardDefaults.cardElevation(6.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    border = BorderStroke(1.dp, Color.Gray)
+                ) {
+                    Column(Modifier.fillMaxSize().padding(12.dp)) {
+                        Text("款号: ${ticket.styleNo}", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        Text("扎号: ${String.format("%02d", ticket.bundleNo)}", fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top=4.dp))
+                        Text("码数: ${ticket.size}", fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top=4.dp))
+                        Text("数量: ${ticket.quantity}", fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top=4.dp))
+                        Text("颜色: ${ticket.color}", fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top=4.dp))
+                        
+                        Text("------------------------", fontSize = 10.sp, color = Color.Gray, modifier = Modifier.padding(vertical = 6.dp))
+                        
+                        Text("共 ${ticket.totalBundles} 扎, 总 ${ticket.totalQuantity} 件", fontSize = 11.sp, color = Color.DarkGray)
+                        Text("${ticket.customer}  ${ticket.dateStr}", fontSize = 11.sp, color = Color.DarkGray, modifier = Modifier.padding(top = 2.dp))
+                    }
+                }
+            }
+        }
+    }
+}
