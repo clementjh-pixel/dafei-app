@@ -25,41 +25,31 @@ object BluetoothPrinter {
     fun isConnected(): Boolean = socket?.isConnected == true
 
     fun printTicket(
-        customer: String,
-        styleNo: String,
-        ticketNo: String,
-        color: String,
-        size: String,
-        qty: Int,
-        bedNo: String,
-        dateStr: String,
-        bundleNo: Int,
-        totalBundles: Int,
-        totalQuantity: Int
+        customer: String, styleNo: String, ticketNo: String, color: String, size: String, qty: Int,
+        bedNo: String, dateStr: String, bundleNo: Int, totalBundles: Int, totalQuantity: Int
     ) {
         if (outputStream == null) return
 
-        // 40x80mm TSPL 指令，排版调整为 5行大字 + 虚线 + 2行小字
+        // 203dpi 环境下：
+        // 40x80mm 大约为宽 320 点，高 640 点。
+        // 顶部留白 20mm，大约相当于 160 点。
+        // 字体加粗变大：TSS24.BF2(2倍大小) 或 TSS24.BF2 的 2倍宽高 (0,2,2)
         val command = "SIZE 40 mm, 80 mm\r\n" +
                 "GAP 2 mm, 0 mm\r\n" +
                 "DIRECTION 1\r\n" +
                 "CLS\r\n" +
-                // 1. 款号 (大字体)
-                "TEXT 10, 10, \"TSS24.BF2\", 0, 1, 1, \"款号: " + styleNo + "\"\r\n" +
-                // 2. 扎号 (大字体)
-                "TEXT 10, 45, \"TSS24.BF2\", 0, 1, 1, \"扎号: " + String.format("%02d", bundleNo) + "\"\r\n" +
-                // 3. 码数 (大字体)
-                "TEXT 10, 80, \"TSS24.BF2\", 0, 1, 1, \"码数: " + size + "\"\r\n" +
-                // 4. 数量 (大字体)
-                "TEXT 10, 115, \"TSS24.BF2\", 0, 1, 1, \"数量: " + qty + "\"\r\n" +
-                // 5. 颜色 (大字体，新加的)
-                "TEXT 10, 150, \"TSS24.BF2\", 0, 1, 1, \"颜色: " + color + "\"\r\n" +
-                // 虚线分割
-                "TEXT 10, 185, \"TSS16.BF2\", 0, 1, 1, \"----------------------\"\r\n" +
-                // 6. 总共扎数、总件数（小字体）
-                "TEXT 10, 215, \"TSS16.BF2\", 0, 1, 1, \"共 " + totalBundles + " 扎, 总 " + totalQuantity + " 件\"\r\n" +
-                // 7. 客户、日期（小字体）
-                "TEXT 10, 245, \"TSS16.BF2\", 0, 1, 1, \"" + customer + "  " + dateStr + "\"\r\n" +
+                // 从 Y=160 开始打印 (顶部留白 20mm)
+                "TEXT 10, 160, \"TSS24.BF2\", 0, 1, 1, \"款号: " + styleNo + "\"\r\n" +
+                "TEXT 10, 210, \"TSS24.BF2\", 0, 1, 1, \"床号: " + bedNo + "\"\r\n" +
+                "TEXT 10, 260, \"TSS24.BF2\", 0, 1, 1, \"扎号: " + String.format("%02d", bundleNo) + "\"\r\n" +
+                "TEXT 10, 310, \"TSS24.BF2\", 0, 1, 1, \"码数: " + size + "\"\r\n" +
+                "TEXT 10, 360, \"TSS24.BF2\", 0, 1, 1, \"数量: " + qty + "\"\r\n" +
+                "TEXT 10, 410, \"TSS24.BF2\", 0, 1, 1, \"颜色: " + color + "\"\r\n" +
+                // 虚线
+                "TEXT 10, 460, \"TSS16.BF2\", 0, 1, 1, \"----------------------\"\r\n" +
+                // 底部小字信息
+                "TEXT 10, 490, \"TSS16.BF2\", 0, 1, 1, \"共 " + totalBundles + " 扎, " + totalQuantity + " 件\"\r\n" +
+                "TEXT 10, 520, \"TSS16.BF2\", 0, 1, 1, \"" + customer + " " + dateStr + "\"\r\n" +
                 "PRINT 1, 1\r\n"
 
         try {
