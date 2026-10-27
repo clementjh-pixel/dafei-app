@@ -219,17 +219,33 @@ fun MainAppScreen(connectedDeviceName: String?, onConnectClick: () -> Unit, curr
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text(if (currentTab == 0) "打菲助手" else "历史裁床单") },
-                actions = {
-                    TextButton(onClick = {
-                        if (activity.getPairedDevices().isEmpty()) Toast.makeText(context, "请先配对蓝牙", Toast.LENGTH_SHORT).show()
-                        else { pairedDevices.value = activity.getPairedDevices(); showBluetoothDialog = true }
-                    }) { Text(text = connectedDeviceName ?: "未连接", color = Color.White) }
-                    TextButton(onClick = onLogout) { Text("退出", color = Color.White) }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF1565C0))
-            )
+            // 在 MainActivity.kt 中找到这里：
+TopAppBar(
+    title = { Text(if (currentTab == 0) "打菲助手" else "历史裁床单") },
+    actions = {
+        // --- 新增：测试打印按钮 ---
+        if (connectedDeviceName != null) {
+            TextButton(onClick = {
+                if (BluetoothPrinter.isConnected()) {
+                    BluetoothPrinter.printTest()
+                    Toast.makeText(context, "已发送测试指令", Toast.LENGTH_SHORT).show()
+                }
+            }) {
+                Text("测试", color = Color.Yellow)
+            }
+        }
+        // -------------------------
+
+        TextButton(onClick = {
+            if (activity.getPairedDevices().isEmpty()) Toast.makeText(context, "请先配对蓝牙", Toast.LENGTH_SHORT).show()
+            else { pairedDevices.value = activity.getPairedDevices(); showBluetoothDialog = true }
+        }) { Text(text = connectedDeviceName ?: "未连接", color = Color.White) }
+        
+        TextButton(onClick = onLogout) { Text("退出", color = Color.White) }
+    },
+    colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF1565C0))
+)
+
         },
         bottomBar = {
             NavigationBar {
