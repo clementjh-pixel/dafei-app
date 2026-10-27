@@ -24,36 +24,52 @@ object BluetoothPrinter {
 
     fun isConnected(): Boolean = socket?.isConnected == true
 
+    // --- 新增：测试打印 ---
+    fun printTest() {
+        if (outputStream == null) return
+        try {
+            // 简单的 TSPL 测试指令
+            val testCmd = "SIZE 40 mm, 80 mm\r\n" +
+                    "GAP 2 mm, 0 mm\r\n" +
+                    "DIRECTION 1\r\n" +
+                    "CLS\r\n" +
+                    "TEXT 20, 50, \"3\", 0, 1, 1, \"Hello Printer!\"\r\n" +
+                    "PRINT 1, 1\r\n"
+            outputStream?.write(testCmd.toByteArray(Charsets.UTF_8))
+            outputStream?.flush()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    // --- 正式打印标签 ---
     fun printTicket(
         customer: String, styleNo: String, ticketNo: String, color: String, size: String, qty: Int,
         bedNo: String, dateStr: String, bundleNo: Int, totalBundles: Int, totalQuantity: Int
     ) {
         if (outputStream == null) return
 
-        // 203dpi 环境下：
-        // 40x80mm 大约为宽 320 点，高 640 点。
-        // 顶部留白 20mm，大约相当于 160 点。
-        // 字体加粗变大：TSS24.BF2(2倍大小) 或 TSS24.BF2 的 2倍宽高 (0,2,2)
-        val command = "SIZE 40 mm, 80 mm\r\n" +
+        // 强制留白 20mm（203dpi 下 20mm 约等于 160 点）
+        // 打印机中文支持：TSS24.BF2 (大)，TSS16.BF2 (小)
+        val command = "\r\n\r\n" + // 先发两个回车唤醒打印机缓冲区
+                "SIZE 40 mm, 80 mm\r\n" +
                 "GAP 2 mm, 0 mm\r\n" +
                 "DIRECTION 1\r\n" +
                 "CLS\r\n" +
-                // 从 Y=160 开始打印 (顶部留白 20mm)
                 "TEXT 10, 160, \"TSS24.BF2\", 0, 1, 1, \"款号: " + styleNo + "\"\r\n" +
                 "TEXT 10, 210, \"TSS24.BF2\", 0, 1, 1, \"床号: " + bedNo + "\"\r\n" +
                 "TEXT 10, 260, \"TSS24.BF2\", 0, 1, 1, \"扎号: " + String.format("%02d", bundleNo) + "\"\r\n" +
                 "TEXT 10, 310, \"TSS24.BF2\", 0, 1, 1, \"码数: " + size + "\"\r\n" +
                 "TEXT 10, 360, \"TSS24.BF2\", 0, 1, 1, \"数量: " + qty + "\"\r\n" +
                 "TEXT 10, 410, \"TSS24.BF2\", 0, 1, 1, \"颜色: " + color + "\"\r\n" +
-                // 虚线
                 "TEXT 10, 460, \"TSS16.BF2\", 0, 1, 1, \"----------------------\"\r\n" +
-                // 底部小字信息
                 "TEXT 10, 490, \"TSS16.BF2\", 0, 1, 1, \"共 " + totalBundles + " 扎, " + totalQuantity + " 件\"\r\n" +
                 "TEXT 10, 520, \"TSS16.BF2\", 0, 1, 1, \"" + customer + " " + dateStr + "\"\r\n" +
                 "PRINT 1, 1\r\n"
 
         try {
-            outputStream?.write(command.toByteArray(Charsets.UTF_8))
+            // 尝试使用 GBK 编码发送，部分打印机中文需要 GBK
+            outputStream?.write(command.toByteArray(charset("GBK")))
             outputStream?.flush()
         } catch (e: Exception) {
             e.printStackTrace()
