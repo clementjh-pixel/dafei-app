@@ -21,6 +21,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -34,6 +35,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -42,6 +45,8 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.FileProvider
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
@@ -530,7 +535,7 @@ fun DetailScreen(order: CutOrderData, onBack: () -> Unit) {
             Spacer(Modifier.width(60.dp))
         }
         Text("${order.dateStr}  款号: ${order.styleNo}  床号: ${order.bedNo}", fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 12.dp))
-        if (order.imageBase64 != null) Button({ showImageDialog = true }, Modifier.fillMaxWidth().padding(bottom = 12.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE3F2FD), contentColor = Color(0xFF1565C0))) { Text("📷 查看图片") }
+        if (order.imageBase64 != null) Button({ showImageDialog = true }, Modifier.fillMaxWidth().padding(bottom = 12.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE3F2FD), contentColor = Color(0xFF1565C0))) { Text("📷 查看图片 (支持放大)") }
         Text("💡 左右滑动查看", fontSize = 11.sp, color = Color.Gray)
         TableView(order)
         Spacer(Modifier.height(24.dp))
@@ -539,14 +544,56 @@ fun DetailScreen(order: CutOrderData, onBack: () -> Unit) {
     }
 }
 
+// 支持双指放大缩小的图片查看弹窗
 @Composable
 fun ImageViewerDialog(base64Str: String, onDismiss: () -> Unit) {
     val bitmap = decodeBase64ToBitmap(base64Str)
-    AlertDialog(
-        onDismissRequest = onDismiss, title = { Text("裁床图片") },
-        text = { if (bitmap != null) Image(bitmap.asImageBitmap(), "大图", Modifier.fillMaxWidth().wrapContentHeight(), contentScale = ContentScale.Fit) else Text("图片解析失败") },
-        confirmButton = { TextButton({ onDismiss() }) { Text("关闭") } }
-    )
+    var scale by remember { mutableStateOf(1f) }
+    var offset by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false) // 让弹窗全屏，方便操作大图
+    ) {
+        Surface(Modifier.fillMaxSize().background(Color.Black)) {
+            Box(Modifier.fillMaxSize()) {
+                if (bitmap != null) {
+                    Image(
+                        bitmap = bitmap.asImageBitmap(),
+                        contentDescription = "大图",
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .pointerInput(Unit) {
+                                detectTransformGestures { _, pan, zoom, _ ->
+                                    scale = (scale * zoom).coerceIn(1f, 5f) // 限制放大倍数 1~5 倍
+                                    if (scale > 1f) {
+                                        offset += pan
+                                    } else {
+                                        offset = androidx.compose.ui.geometry.Offset.Zero
+                                    }
+                                }
+                            }
+                            .graphicsLayer(
+                                scaleX = scale,
+                                scaleY = scale,
+                                translationX = offset.x,
+                                translationY = offset.y
+                            ),
+                        contentScale = ContentScale.Fit
+                    )
+                } else {
+                    Text("图片解析失败", color = Color.White, modifier = Modifier.align(Alignment.Center))
+                }
+                
+                TextButton(
+                    onClick = onDismiss, 
+                    modifier = Modifier.align(Alignment.TopEnd).padding(16.dp)
+                ) {
+                    Text("关闭", color = Color.White, fontSize = 18.sp)
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -612,9 +659,10 @@ fun TicketPreviewScreen(tickets: List<TicketData>, order: CutOrderData, onBack: 
         }
         LazyColumn(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             items(tickets) { ticket ->
-                Card(Modifier.fillMaxWidth(0.7f).aspectRatio(0.5f).align(Alignment.CenterHorizontally), elevation = CardDefaults.cardElevation(6.dp), colors = CardDefaults.cardColors(containerColor = Color.White), border = BorderStroke(1.dp, Color.Gray)) {
-                    Column(Modifier.fillMaxSize().padding(12.dp)) {
+                Card(Modifier.fillMaxWidth(0.8f).aspectRatio(0.5f).align(Alignment.CenterHorizontally), elevation = CardDefaults.cardElevation(6.dp), colors = CardDefaults.cardColors(containerColor = Color.White), border = BorderStroke(1.dp, Color.Gray)) {
+                    Column(Modifier.fillMaxSize().padding(top = 30.dp, start = 12.dp, end = 12.dp, bottom = 12.dp)) { // 顶部留白预览
                         Text("款号: ${ticket.styleNo}", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        Text("床号: ${ticket.bedNo}", fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top=4.dp))
                         Text("扎号: ${String.format("%02d", ticket.bundleNo)}", fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top=4.dp))
                         Text("码数: ${ticket.size}", fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top=4.dp))
                         Text("数量: ${ticket.quantity}", fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top=4.dp))
