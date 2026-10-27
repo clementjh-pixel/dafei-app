@@ -42,9 +42,11 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -357,19 +359,45 @@ fun GenerateScreen(historyOrders: List<CutOrderData>, onGenerate: (CutOrderData)
     var dateStr by remember { mutableStateOf(SimpleDateFormat("yy-MM-dd", Locale.CHINA).format(Date())) }
     var bedNo by remember { mutableStateOf("") }
     var imageBase64 by remember { mutableStateOf<String?>(null) }
+    var cameraUri by remember { mutableStateOf<Uri?>(null) }
     
     var continuousBundle by remember { mutableStateOf(false) }
 
-    val imagePickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
+    // 相册选择器
+    val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         uri?.let {
             val inputStream = context.contentResolver.openInputStream(it)
             val bytes = inputStream?.readBytes()
             inputStream?.close()
-            if (bytes != null) {
-                imageBase64 = Base64.encodeToString(compressImage(bytes), Base64.DEFAULT)
+            if (bytes != null) imageBase64 = Base64.encodeToString(compressImage(bytes), Base64.DEFAULT)
+        }
+    }
+
+    // 相机拍照回调
+    val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
+        if (success) {
+            cameraUri?.let { uri ->
+                val inputStream = context.contentResolver.openInputStream(uri)
+                val bytes = inputStream?.readBytes()
+                inputStream?.close()
+                if (bytes != null) imageBase64 = Base64.encodeToString(compressImage(bytes), Base64.DEFAULT)
             }
         }
     }
+
+    // 申请相机权限
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
+        if (isGranted) {
+            val file = File(context.cacheDir, "temp_photo.jpg")
+            cameraUri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+            cameraLauncher.launch(cameraUri!!)
+        } else {
+            Toast.makeText(context, "需要相机权限才能拍照", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // 图片选择弹窗
+    var showImageSourceDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(dateStr, historyOrders) {
         val currentMonthPrefix = dateStr.take(5)
@@ -381,7 +409,8 @@ fun GenerateScreen(historyOrders: List<CutOrderData>, onGenerate: (CutOrderData)
     val presetSizes = remember { mutableStateOf(prefs.getStringSet("sizes", setOf("S", "M", "L", "XL"))?.toMutableList() ?: mutableListOf()) }
     val presetColors = remember { mutableStateOf(prefs.getStringSet("colors", setOf("黑色", "白色", "杏色"))?.toMutableList() ?: mutableListOf()) }
 
-    val selectedSizes = remember { mutableStateOf(listOf("S", "M", "L", "XL")) }
+    // 默认没有码数
+    val selectedSizes = remember { mutableStateOf(listOf<String>()) }
     val selectedColorsOrder = remember { mutableStateListOf<String>() }
     val rowList = remember { mutableStateListOf<RowInputData>() }
 
@@ -389,6 +418,8 @@ fun GenerateScreen(historyOrders: List<CutOrderData>, onGenerate: (CutOrderData)
     var tempSelectedSizes by remember { mutableStateOf(listOf<String>()) }
     
     var showSelectColorDialog by remember { mutableStateOf(false) }
+    // 临时存放选中的颜色
+    var tempSelectedColors by remember { mutableStateOf(setOf<String>()) }
     var newColorInput by remember { mutableStateOf("") }
     var newSizeText by remember { mutableStateOf("") }
 
@@ -411,11 +442,11 @@ fun GenerateScreen(historyOrders: List<CutOrderData>, onGenerate: (CutOrderData)
         Spacer(Modifier.height(8.dp))
         
         Box(
-            Modifier.fillMaxWidth().height(100.dp).border(1.dp, Color.Gray, MaterialTheme.shapes.medium).clickable { imagePickerLauncher.launch("image/*") },
+            Modifier.fillMaxWidth().height(100.dp).border(1.dp, Color.Gray, MaterialTheme.shapes.medium).clickable { showImageSourceDialog = true },
             contentAlignment = Alignment.Center
         ) {
             if (imageBase64 == null) {
-                Text("+ 点击上传裁床图片", color = Color.Gray, fontSize = 14.sp)
+                Text("+ 点击拍照或上传图片", color = Color.Gray, fontSize = 14.sp)
             } else {
                 val bmp = decodeBase64ToBitmap(imageBase64!!)
                 if (bmp != null) {
@@ -434,7 +465,10 @@ fun GenerateScreen(historyOrders: List<CutOrderData>, onGenerate: (CutOrderData)
                     tempSelectedSizes = selectedSizes.value.toList()
                     showSelectSizeDialog = true 
                 }) { Text("+ 选择码数") }
-                TextButton(onClick = { showSelectColorDialog = true }) { Text("+ 选择颜色") }
+                TextButton(onClick = { 
+                    tempSelectedColors = selectedColorsOrder.toSet() // 重置选择状态
+                    showSelectColorDialog = true 
+                }) { Text("+ 选择颜色") }
             }
         }
 
@@ -506,6 +540,7 @@ fun GenerateScreen(historyOrders: List<CutOrderData>, onGenerate: (CutOrderData)
             onClick = {
                 if (styleNo.isBlank()) { Toast.makeText(context, "款号不能为空", Toast.LENGTH_SHORT).show(); return@Button }
                 if (bedNo.isBlank()) { Toast.makeText(context, "床号不能为空", Toast.LENGTH_SHORT).show(); return@Button }
+                if (selectedSizes.value.isEmpty()) { Toast.makeText(context, "请先选择码数", Toast.LENGTH_SHORT).show(); return@Button }
                 
                 val cutId = "C" + System.currentTimeMillis()
                 val newTickets = mutableListOf<TicketData>()
@@ -571,6 +606,28 @@ fun GenerateScreen(historyOrders: List<CutOrderData>, onGenerate: (CutOrderData)
         Spacer(Modifier.height(40.dp))
     }
 
+    // 图片选择弹窗
+    if (showImageSourceDialog) {
+        AlertDialog(
+            onDismissRequest = { showImageSourceDialog = false },
+            title = { Text("选择图片") },
+            text = {
+                Column {
+                    Text("拍照", modifier = Modifier.fillMaxWidth().clickable {
+                        showImageSourceDialog = false
+                        cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                    }.padding(vertical = 12.dp), fontSize = 16.sp)
+                    HorizontalDivider()
+                    Text("从相册选择", modifier = Modifier.fillMaxWidth().clickable {
+                        showImageSourceDialog = false
+                        galleryLauncher.launch("image/*")
+                    }.padding(vertical = 12.dp), fontSize = 16.sp)
+                }
+            },
+            confirmButton = { TextButton(onClick = { showImageSourceDialog = false }) { Text("取消") } }
+        )
+    }
+
     if (showSelectSizeDialog) {
         AlertDialog(
             onDismissRequest = { showSelectSizeDialog = false },
@@ -623,21 +680,24 @@ fun GenerateScreen(historyOrders: List<CutOrderData>, onGenerate: (CutOrderData)
         )
     }
 
+    // 颜色多选弹窗
     if (showSelectColorDialog) {
         AlertDialog(
             onDismissRequest = { showSelectColorDialog = false },
             title = { Text("选择颜色") },
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState())) {
-                    Text("点击颜色即可添加一行：", fontSize = 12.sp, color = Color.Gray)
+                    Text("勾选要添加的颜色：", fontSize = 12.sp, color = Color.Gray)
                     presetColors.value.forEach { color ->
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable {
-                            rowList.add(RowInputData(color = color))
-                            if (!selectedColorsOrder.contains(color)) selectedColorsOrder.add(color)
-                            showSelectColorDialog = false
-                        }.padding(vertical = 12.dp)) {
-                            Text("+ ", fontSize = 16.sp, color = Color(0xFF1565C0))
-                            Text(color, fontSize = 16.sp, modifier = Modifier.weight(1f))
+                            if (tempSelectedColors.contains(color)) {
+                                tempSelectedColors = tempSelectedColors - color
+                            } else {
+                                tempSelectedColors = tempSelectedColors + color
+                            }
+                        }.padding(vertical = 8.dp)) {
+                            Checkbox(checked = tempSelectedColors.contains(color), onCheckedChange = null)
+                            Text(color, fontSize = 16.sp, modifier = Modifier.padding(start = 8.dp))
                         }
                     }
                     
@@ -651,244 +711,7 @@ fun GenerateScreen(historyOrders: List<CutOrderData>, onGenerate: (CutOrderData)
                                     presetColors.value.add(c)
                                     prefs.edit().putStringSet("colors", presetColors.value.toSet()).apply()
                                 }
-                                rowList.add(RowInputData(color = c))
-                                if (!selectedColorsOrder.contains(c)) selectedColorsOrder.add(c)
+                                tempSelectedColors = tempSelectedColors + c
                                 newColorInput = ""
-                                showSelectColorDialog = false
                             }
-                        }, modifier = Modifier.padding(start = 8.dp)) { Text("添加并加入") }
-                    }
-                }
-            },
-            confirmButton = { TextButton(onClick = { showSelectColorDialog = false }) { Text("关闭") } }
-        )
-    }
-}
-
-// ================= 历史记录与裁床单详情 =================
-@Composable
-fun HistoryListScreen(historyOrders: List<CutOrderData>, onDelete: (Int) -> Unit) {
-    if (historyOrders.isEmpty()) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("暂无历史数据", color = Color.Gray) }
-        return
-    }
-    var selectedOrder by remember { mutableStateOf<CutOrderData?>(null) }
-    var orderToDelete by remember { mutableStateOf<Pair<Int, CutOrderData>?>(null) }
-
-    if (selectedOrder != null) {
-        DetailScreen(order = selectedOrder!!) { selectedOrder = null }
-    } else {
-        LazyColumn(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(historyOrders.size) { index ->
-                val order = historyOrders[index]
-                Card(onClick = { selectedOrder = order }, modifier = Modifier.fillMaxWidth(), elevation = CardDefaults.cardElevation(4.dp)) {
-                    Column(Modifier.padding(16.dp)) {
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                            Text("款号: ${order.styleNo}  床号: ${order.bedNo}", fontWeight = FontWeight.Bold)
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text("${order.totalQty} 件", color = Color(0xFF1565C0), fontWeight = FontWeight.Bold)
-                                Spacer(Modifier.width(12.dp))
-                                Text("删除", color = Color.Red, fontSize = 13.sp, modifier = Modifier.clickable { orderToDelete = Pair(index, order) })
-                            }
-                        }
-                        Text("客户: ${order.customer.ifBlank { "无" }}  |  日期: ${order.dateStr}", fontSize = 12.sp, color = Color.Gray, modifier = Modifier.padding(top = 4.dp))
-                    }
-                }
-            }
-        }
-    }
-
-    if (orderToDelete != null) {
-        AlertDialog(
-            onDismissRequest = { orderToDelete = null },
-            title = { Text("删除确认") },
-            text = { Text("确定删除裁床单【${orderToDelete!!.second.styleNo}】吗？") },
-            confirmButton = { TextButton(onClick = { onDelete(orderToDelete!!.first); orderToDelete = null }) { Text("删除", color = Color.Red) } },
-            dismissButton = { TextButton(onClick = { orderToDelete = null }) { Text("取消") } }
-        )
-    }
-}
-
-@Composable
-fun DetailScreen(order: CutOrderData, onBack: () -> Unit) {
-    var showPreview by remember { mutableStateOf(false) }
-    var showImageDialog by remember { mutableStateOf(false) }
-
-    if (showPreview) {
-        TicketPreviewScreen(order.tickets, order) { showPreview = false }
-        return
-    }
-    
-    if (showImageDialog && order.imageBase64 != null) {
-        ImageViewerDialog(order.imageBase64) { showImageDialog = false }
-    }
-
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onBack) { Text("< 返回列表") }
-            Text("裁床单明细", fontWeight = FontWeight.Bold, fontSize = 18.sp, modifier = Modifier.weight(1f), textAlign = TextAlign.Center)
-            Spacer(Modifier.width(60.dp))
-        }
-
-        Spacer(Modifier.height(16.dp))
-
-        Text("${order.dateStr}    款号: ${order.styleNo}    床号: ${order.bedNo}", fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 12.dp))
-        
-        if (order.imageBase64 != null) {
-            Button(
-                onClick = { showImageDialog = true },
-                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE3F2FD), contentColor = Color(0xFF1565C0))
-            ) { Text("📷 查看此单关联的图片") }
-        }
-
-        Text("💡 表格如果没显示全，可以左右滑动查看", fontSize = 11.sp, color = Color.Gray, modifier = Modifier.padding(bottom = 4.dp))
-        TableView(order = order)
-
-        Spacer(Modifier.height(24.dp))
-
-        Button(
-            onClick = { showPreview = true },
-            modifier = Modifier.fillMaxWidth().height(50.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32))
-        ) { Text("预览并打印标签", fontSize = 16.sp) }
-        
-        Spacer(Modifier.height(10.dp))
-        Text("注：以上数据包含 ${order.tickets.size} 张标签，总计 ${order.totalQty} 件", fontSize = 12.sp, color = Color.Gray)
-    }
-}
-
-@Composable
-fun ImageViewerDialog(base64Str: String, onDismiss: () -> Unit) {
-    val bitmap = decodeBase64ToBitmap(base64Str)
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("裁床图片") },
-        text = {
-            if (bitmap != null) {
-                Image(
-                    bitmap = bitmap.asImageBitmap(),
-                    contentDescription = "大图",
-                    modifier = Modifier.fillMaxWidth().wrapContentHeight(),
-                    contentScale = ContentScale.Fit
-                )
-            } else {
-                Text("图片解析失败")
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } }
-    )
-}
-
-@Composable
-fun TableView(order: CutOrderData) {
-    val sizeTotals = mutableMapOf<Int, Int>()
-    val border = BorderStroke(1.dp, Color.Black)
-    val cellModifier = Modifier.border(border).padding(horizontal = 4.dp, vertical = 8.dp)
-    
-    Box(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
-        Column(Modifier.border(border)) {
-            Row(Modifier.background(Color(0xFFF5F5F5))) {
-                Box(Modifier.width(70.dp).then(cellModifier)) { Text("颜色", fontWeight = FontWeight.Bold, fontSize = 12.sp) }
-                order.sizesOrder.forEachIndexed { colIndex, size ->
-                    Box(Modifier.width(36.dp).then(cellModifier)) { Text("扎号", fontWeight = FontWeight.Bold, fontSize = 11.sp, modifier = Modifier.align(Alignment.Center)) }
-                    Box(Modifier.width(40.dp).then(cellModifier)) { Text(size, fontWeight = FontWeight.Bold, fontSize = 12.sp, modifier = Modifier.align(Alignment.Center)) }
-                }
-                Box(Modifier.width(50.dp).then(cellModifier)) { Text("合计", fontWeight = FontWeight.Bold, fontSize = 12.sp, modifier = Modifier.align(Alignment.Center)) }
-            }
-
-            order.rawRows.forEachIndexed { rowIdx, row ->
-                var rowTotal = 0
-                Row(Modifier.border(border)) {
-                    Box(Modifier.width(70.dp).then(cellModifier)) { Text(row.color, fontSize = 12.sp) }
-                    order.sizesOrder.forEachIndexed { colIndex, _ ->
-                        val qty = row.quantities["${order.sizesOrder[colIndex]}-$colIndex"]?.toIntOrNull() ?: 0
-                        val bundleNo = order.rowBundles[rowIdx]?.get(colIndex)
-                        
-                        Box(Modifier.width(36.dp).then(cellModifier)) { 
-                            if (bundleNo != null) {
-                                Text(String.format("%02d", bundleNo), color = Color(0xFF1565C0), fontWeight = FontWeight.Bold, fontSize = 12.sp, modifier = Modifier.align(Alignment.Center))
-                            }
-                        }
-                        
-                        rowTotal += qty
-                        sizeTotals[colIndex] = (sizeTotals[colIndex] ?: 0) + qty
-                        Box(Modifier.width(40.dp).then(cellModifier)) { 
-                            Text(if (qty > 0) qty.toString() else "", fontSize = 12.sp, modifier = Modifier.align(Alignment.Center)) 
-                        }
-                    }
-                    Box(Modifier.width(50.dp).then(cellModifier)) { Text("${rowTotal}件", fontSize = 12.sp, modifier = Modifier.align(Alignment.Center)) }
-                }
-            }
-
-            Row(Modifier.background(Color(0xFFF5F5F5))) {
-                Box(Modifier.width(70.dp).then(cellModifier)) { Text("合计", fontWeight = FontWeight.Bold, fontSize = 12.sp) }
-                var grandTotal = 0
-                order.sizesOrder.forEachIndexed { colIndex, _ ->
-                    val st = sizeTotals[colIndex] ?: 0
-                    grandTotal += st
-                    Box(Modifier.width(36.dp).then(cellModifier)) { Text("", fontSize = 12.sp) }
-                    Box(Modifier.width(40.dp).then(cellModifier)) { Text("${st}件", fontWeight = FontWeight.Bold, fontSize = 12.sp, modifier = Modifier.align(Alignment.Center)) }
-                }
-                Box(Modifier.width(50.dp).then(cellModifier)) { Text("${grandTotal}件", fontWeight = FontWeight.Bold, fontSize = 12.sp, modifier = Modifier.align(Alignment.Center)) }
-            }
-        }
-    }
-}
-
-// ================= 标签预览与打印界面 =================
-@Composable
-fun TicketPreviewScreen(tickets: List<TicketData>, order: CutOrderData, onBack: () -> Unit) {
-    val context = LocalContext.current
-    var isPrinting by remember { mutableStateOf(false) }
-
-    Column(Modifier.fillMaxSize().background(Color(0xFFE0E0E0))) {
-        Row(Modifier.fillMaxWidth().background(Color.White).padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onBack) { Text("< 返回") }
-            Text("标签预览 (共${tickets.size}张)", modifier = Modifier.weight(1f), fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
-            Button(
-                onClick = {
-                    if (BluetoothPrinter.isConnected()) {
-                        isPrinting = true
-                        tickets.forEach { 
-                            BluetoothPrinter.printTicket(
-                                it.customer, it.styleNo, it.ticketNo, it.color, it.size, 
-                                it.quantity, it.bedNo, it.dateStr, it.bundleNo, it.totalBundles, it.totalQuantity
-                            ) 
-                        }
-                        Toast.makeText(context, "已发送打印指令", Toast.LENGTH_LONG).show()
-                        isPrinting = false
-                    } else {
-                        Toast.makeText(context, "请先连接蓝牙打印机", Toast.LENGTH_SHORT).show()
-                    }
-                },
-                enabled = !isPrinting,
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32))
-            ) { Text(if (isPrinting) "发送中..." else "确认打印") }
-        }
-
-        LazyColumn(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            items(tickets) { ticket ->
-                Card(
-                    modifier = Modifier.fillMaxWidth(0.7f).aspectRatio(0.5f).align(Alignment.CenterHorizontally),
-                    elevation = CardDefaults.cardElevation(6.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color.White),
-                    border = BorderStroke(1.dp, Color.Gray)
-                ) {
-                    Column(Modifier.fillMaxSize().padding(12.dp)) {
-                        Text("款号: ${ticket.styleNo}", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                        Text("扎号: ${String.format("%02d", ticket.bundleNo)}", fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top=4.dp))
-                        Text("码数: ${ticket.size}", fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top=4.dp))
-                        Text("数量: ${ticket.quantity}", fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top=4.dp))
-                        Text("颜色: ${ticket.color}", fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top=4.dp))
-                        
-                        Text("------------------------", fontSize = 10.sp, color = Color.Gray, modifier = Modifier.padding(vertical = 6.dp))
-                        
-                        Text("共 ${ticket.totalBundles} 扎, 总 ${ticket.totalQuantity} 件", fontSize = 11.sp, color = Color.DarkGray)
-                        Text("${ticket.customer}  ${ticket.dateStr}", fontSize = 11.sp, color = Color.DarkGray, modifier = Modifier.padding(top = 2.dp))
-                    }
-                }
-            }
-        }
-    }
-}
+                        }, modifier = Modifier.padding(start = 8.dp)) { Text("添加
