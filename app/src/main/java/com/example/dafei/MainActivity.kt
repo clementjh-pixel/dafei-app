@@ -13,6 +13,7 @@ import android.os.Bundle
 import android.util.Base64
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -21,6 +22,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -334,13 +336,27 @@ fun GenerateScreen(historyOrders: List<CutOrderData>, onGenerate: (CutOrderData)
             else decodeBase64ToBitmap(imageBase64!!)?.let { Image(it.asImageBitmap(), "图片", Modifier.fillMaxSize(), contentScale = ContentScale.Crop) } ?: Text("解析失败", color = Color.Red)
         }
         Spacer(Modifier.height(16.dp))
+        
+        // 主界面：码数、颜色按钮并排
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
             Text("颜色 / 件数", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-            Row {
-                TextButton({ tempSelectedSizes = selectedSizes.value.toList(); showSelectSizeDialog = true }) { Text("+ 选择码数") }
-                TextButton({ tempSelectedColors = selectedColorsOrder.toSet(); showSelectColorDialog = true }) { Text("+ 选择颜色") }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = { tempSelectedSizes = selectedSizes.value.toList(); showSelectSizeDialog = true },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1565C0)),
+                    modifier = Modifier.height(36.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp)
+                ) { Text("+ 选择码数", fontSize = 12.sp) }
+                
+                Button(
+                    onClick = { tempSelectedColors = selectedColorsOrder.toSet(); showSelectColorDialog = true },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32)),
+                    modifier = Modifier.height(36.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp)
+                ) { Text("+ 选择颜色", fontSize = 12.sp) }
             }
         }
+        
         Spacer(Modifier.height(8.dp))
         if (selectedColorsOrder.isNotEmpty()) {
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -432,10 +448,12 @@ fun GenerateScreen(historyOrders: List<CutOrderData>, onGenerate: (CutOrderData)
             confirmButton = { TextButton({ showImageSourceDialog = false }) { Text("取消") } }
         )
     }
+    
+    // 码数弹窗：确定按钮变实心，添加变边框
     if (showSelectSizeDialog) {
         AlertDialog(
             onDismissRequest = { showSelectSizeDialog = false },
-            title = { Text("码数") },
+            title = { Text("选择码数") },
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState())) {
                     Row(Modifier.fillMaxWidth().background(Color(0xFFF5F5F5)).padding(8.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -453,13 +471,25 @@ fun GenerateScreen(historyOrders: List<CutOrderData>, onGenerate: (CutOrderData)
                     HorizontalDivider(Modifier.padding(vertical = 8.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         OutlinedTextField(newSizeText, { newSizeText = it.uppercase() }, modifier = Modifier.weight(1f), placeholder = { Text("新码数") })
-                        Button({ if (newSizeText.isNotBlank()) { presetSizes.value.add(newSizeText.trim()); tempSelectedSizes = tempSelectedSizes + newSizeText.trim(); newSizeText = "" } }, modifier = Modifier.padding(start = 8.dp)) { Text("添加") }
+                        OutlinedButton(
+                            onClick = { 
+                                if (newSizeText.isNotBlank()) { 
+                                    presetSizes.value.add(newSizeText.trim()); tempSelectedSizes = tempSelectedSizes + newSizeText.trim(); newSizeText = "" 
+                                } 
+                            }, 
+                            modifier = Modifier.padding(start = 8.dp)
+                        ) { Text("添加") }
                     }
                 }
             },
-            confirmButton = { TextButton({ selectedSizes.value = tempSelectedSizes; showSelectSizeDialog = false }) { Text("确定") } }
+            confirmButton = { 
+                Button(onClick = { selectedSizes.value = tempSelectedSizes; showSelectSizeDialog = false }) { Text("确定") } 
+            },
+            dismissButton = { TextButton({ showSelectSizeDialog = false }) { Text("取消") } }
         )
     }
+    
+    // 颜色弹窗：确定按钮变实心，添加变边框
     if (showSelectColorDialog) {
         AlertDialog(
             onDismissRequest = { showSelectColorDialog = false },
@@ -475,11 +505,23 @@ fun GenerateScreen(historyOrders: List<CutOrderData>, onGenerate: (CutOrderData)
                     HorizontalDivider(Modifier.padding(vertical = 8.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         OutlinedTextField(newColorInput, { newColorInput = it }, modifier = Modifier.weight(1f), placeholder = { Text("新颜色") })
-                        Button({ if (newColorInput.isNotBlank()) { presetColors.value.add(newColorInput.trim()); tempSelectedColors = tempSelectedColors + newColorInput.trim(); newColorInput = "" } }, modifier = Modifier.padding(start = 8.dp)) { Text("添加") }
+                        OutlinedButton(
+                            onClick = { 
+                                if (newColorInput.isNotBlank()) { 
+                                    presetColors.value.add(newColorInput.trim()); tempSelectedColors = tempSelectedColors + newColorInput.trim(); newColorInput = "" 
+                                } 
+                            }, 
+                            modifier = Modifier.padding(start = 8.dp)
+                        ) { Text("添加") }
                     }
                 }
             },
-            confirmButton = { TextButton({ tempSelectedColors.forEach { if (!selectedColorsOrder.contains(it)) selectedColorsOrder.add(it); rowList.add(RowInputData(it)) }; showSelectColorDialog = false }) { Text("确定加入") } },
+            confirmButton = { 
+                Button(onClick = { 
+                    tempSelectedColors.forEach { if (!selectedColorsOrder.contains(it)) selectedColorsOrder.add(it) }
+                    showSelectColorDialog = false 
+                }) { Text("确定加入") } 
+            },
             dismissButton = { TextButton({ showSelectColorDialog = false }) { Text("取消") } }
         )
     }
@@ -490,6 +532,12 @@ fun HistoryListScreen(historyOrders: List<CutOrderData>, onDelete: (Int) -> Unit
     if (historyOrders.isEmpty()) { Box(Modifier.fillMaxSize(), Alignment.Center) { Text("暂无历史", color = Color.Gray) }; return }
     var selectedOrder by remember { mutableStateOf<CutOrderData?>(null) }
     var orderToDelete by remember { mutableStateOf<Pair<Int, CutOrderData>?>(null) }
+    
+    // 系统返回拦截：如果进入了详情页，就返回列表；否则退出 App
+    BackHandler(enabled = selectedOrder != null) {
+        selectedOrder = null
+    }
+
     if (selectedOrder != null) DetailScreen(selectedOrder!!) { selectedOrder = null }
     else {
         LazyColumn(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -526,8 +574,16 @@ fun HistoryListScreen(historyOrders: List<CutOrderData>, onDelete: (Int) -> Unit
 fun DetailScreen(order: CutOrderData, onBack: () -> Unit) {
     var showPreview by remember { mutableStateOf(false) }
     var showImageDialog by remember { mutableStateOf(false) }
+    
+    // 对详情页内的子页面（打印预览）做返回拦截
+    BackHandler(enabled = showPreview || showImageDialog) {
+        if (showPreview) showPreview = false
+        if (showImageDialog) showImageDialog = false
+    }
+
     if (showPreview) { TicketPreviewScreen(order.tickets, order) { showPreview = false }; return }
     if (showImageDialog && order.imageBase64 != null) { ImageViewerDialog(order.imageBase64) { showImageDialog = false } }
+    
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             TextButton({ onBack() }) { Text("< 返回") }
@@ -535,7 +591,7 @@ fun DetailScreen(order: CutOrderData, onBack: () -> Unit) {
             Spacer(Modifier.width(60.dp))
         }
         Text("${order.dateStr}  款号: ${order.styleNo}  床号: ${order.bedNo}", fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 12.dp))
-        if (order.imageBase64 != null) Button({ showImageDialog = true }, Modifier.fillMaxWidth().padding(bottom = 12.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE3F2FD), contentColor = Color(0xFF1565C0))) { Text("📷 查看图片 (支持放大)") }
+        if (order.imageBase64 != null) Button({ showImageDialog = true }, Modifier.fillMaxWidth().padding(bottom = 12.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE3F2FD), contentColor = Color(0xFF1565C0))) { Text("📷 查看关联图片 (支持缩放)") }
         Text("💡 左右滑动查看", fontSize = 11.sp, color = Color.Gray)
         TableView(order)
         Spacer(Modifier.height(24.dp))
@@ -544,7 +600,7 @@ fun DetailScreen(order: CutOrderData, onBack: () -> Unit) {
     }
 }
 
-// 支持双指放大缩小的图片查看弹窗
+// ================= 图片查看器 =================
 @Composable
 fun ImageViewerDialog(base64Str: String, onDismiss: () -> Unit) {
     val bitmap = decodeBase64ToBitmap(base64Str)
@@ -553,44 +609,52 @@ fun ImageViewerDialog(base64Str: String, onDismiss: () -> Unit) {
 
     Dialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false) // 让弹窗全屏，方便操作大图
+        properties = DialogProperties(usePlatformDefaultWidth = false) // 全屏
     ) {
-        Surface(Modifier.fillMaxSize().background(Color.Black)) {
-            Box(Modifier.fillMaxSize()) {
-                if (bitmap != null) {
-                    Image(
-                        bitmap = bitmap.asImageBitmap(),
-                        contentDescription = "大图",
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .pointerInput(Unit) {
-                                detectTransformGestures { _, pan, zoom, _ ->
-                                    scale = (scale * zoom).coerceIn(1f, 5f) // 限制放大倍数 1~5 倍
-                                    if (scale > 1f) {
-                                        offset += pan
-                                    } else {
-                                        offset = androidx.compose.ui.geometry.Offset.Zero
-                                    }
+        Box(Modifier.fillMaxSize().background(Color.Black)) {
+            if (bitmap != null) {
+                Image(
+                    bitmap = bitmap.asImageBitmap(),
+                    contentDescription = "大图",
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .pointerInput(Unit) {
+                            detectTransformGestures { _, pan, zoom, _ ->
+                                scale = (scale * zoom).coerceIn(1f, 5f) // 限制 1~5 倍
+                                if (scale > 1f) {
+                                    offset += pan
+                                } else {
+                                    offset = androidx.compose.ui.geometry.Offset.Zero
                                 }
                             }
-                            .graphicsLayer(
-                                scaleX = scale,
-                                scaleY = scale,
-                                translationX = offset.x,
-                                translationY = offset.y
-                            ),
-                        contentScale = ContentScale.Fit
-                    )
-                } else {
-                    Text("图片解析失败", color = Color.White, modifier = Modifier.align(Alignment.Center))
-                }
-                
-                TextButton(
-                    onClick = onDismiss, 
-                    modifier = Modifier.align(Alignment.TopEnd).padding(16.dp)
-                ) {
-                    Text("关闭", color = Color.White, fontSize = 18.sp)
-                }
+                        }
+                        .pointerInput(Unit) {
+                            detectTapGestures(
+                                onDoubleTap = { // 双击还原
+                                    scale = 1f
+                                    offset = androidx.compose.ui.geometry.Offset.Zero
+                                }
+                            )
+                        }
+                        .graphicsLayer(
+                            scaleX = scale,
+                            scaleY = scale,
+                            translationX = offset.x,
+                            translationY = offset.y
+                        ),
+                    contentScale = ContentScale.Fit
+                )
+            } else {
+                Text("图片解析失败", color = Color.White, modifier = Modifier.align(Alignment.Center))
+            }
+            
+            // 更明显的关闭按钮
+            Button(
+                onClick = onDismiss,
+                modifier = Modifier.align(Alignment.TopEnd).padding(20.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0x88FFFFFF), contentColor = Color.Black)
+            ) {
+                Text("✕ 关闭", fontSize = 16.sp, fontWeight = FontWeight.Bold)
             }
         }
     }
