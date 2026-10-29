@@ -24,56 +24,53 @@ object BluetoothPrinter {
 
     fun isConnected(): Boolean = socket?.isConnected == true
 
-    // --- 极端测试：纯英文，强制使用字体 "1" ---
+    // --- 测试打印：验证中文字符集是否激活 ---
     fun printTest() {
-    if (outputStream == null) return
-    try {
-        val testCmd = "SIZE 40 mm, 80 mm\r\n" +
-                "GAP 2 mm, 0 mm\r\n" +
-                "DIRECTION 1\r\n" +
-                "CLS\r\n" +
-                // 1. 尝试激活 TSPL 模式（部分双模打印机需要此指令切换）
-                "SET TEAR ON\r\n" +
-                // 2. 使用最基础的英文字体 "0" 或 "1"
-                // 3. 坐标使用点阵值 (1mm≈8dots)，40mm宽约320dots
-                "TEXT 20, 20, \"0\", 0, 1, 1, \"TEST SUCCESS\"\r\n" +
-                "TEXT 20, 80, \"0\", 0, 1, 1, \"Hello MHT!\"\r\n" +
-                "PRINT 1, 1\r\n"
-        outputStream?.write(testCmd.toByteArray(Charsets.UTF_8))
-        outputStream?.flush()
-    } catch (e: Exception) {
-        e.printStackTrace()
+        if (outputStream == null) return
+        try {
+            val testCmd = "SIZE 40 mm, 80 mm\r\n" +
+                    "GAP 2 mm, 0 mm\r\n" +
+                    "DIRECTION 1\r\n" +
+                    "CLS\r\n" +
+                    "CODEPAGE GB18030\r\n" +  // 激活 GB18030 字符集
+                    "CHARSET CHINESE\r\n" +   // 启用中文
+                    "TEXT 10, 10, \"TSS24.BF2\", 0, 1, 1, \"测试成功\"\r\n" +
+                    "PRINT 1, 1\r\n"
+            // 关键：发送 GB18030 编码字节
+            outputStream?.write(testCmd.toByteArray(charset("GB18030")))
+            outputStream?.flush()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
-}
 
-    // --- 正式打印标签（修正版）---
+    // --- 正式打印标签（含中文）---
     fun printTicket(
         customer: String, styleNo: String, ticketNo: String, color: String, size: String, qty: Int,
         bedNo: String, dateStr: String, bundleNo: Int, totalBundles: Int, totalQuantity: Int
     ) {
         if (outputStream == null) return
 
-        // 1. 使用通用字体 "1" 和 "2"
-        // 2. 顶部留白 20mm（Y=160）
-        val command = "\r\n\r\n" +
-                "SIZE 40 mm, 80 mm\r\n" +
+        // 使用 TSS24.BF2 简体中文字体，顶部留白 20mm（Y=160）
+        val command = "SIZE 40 mm, 80 mm\r\n" +
                 "GAP 2 mm, 0 mm\r\n" +
                 "DIRECTION 1\r\n" +
                 "CLS\r\n" +
-                "TEXT 10, 160, \"2\", 0, 1, 1, \"款号: " + styleNo + "\"\r\n" +
-                "TEXT 10, 210, \"2\", 0, 1, 1, \"床号: " + bedNo + "\"\r\n" +
-                "TEXT 10, 260, \"2\", 0, 1, 1, \"扎号: " + String.format("%02d", bundleNo) + "\"\r\n" +
-                "TEXT 10, 310, \"2\", 0, 1, 1, \"码数: " + size + "\"\r\n" +
-                "TEXT 10, 360, \"2\", 0, 1, 1, \"数量: " + qty + "\"\r\n" +
-                "TEXT 10, 410, \"2\", 0, 1, 1, \"颜色: " + color + "\"\r\n" +
-                "TEXT 10, 460, \"1\", 0, 1, 1, \"----------------------\"\r\n" +
-                "TEXT 10, 490, \"1\", 0, 1, 1, \"共 " + totalBundles + " 扎, " + totalQuantity + " 件\"\r\n" +
-                "TEXT 10, 520, \"1\", 0, 1, 1, \"" + customer + " " + dateStr + "\"\r\n" +
+                "CODEPAGE GB18030\r\n" +  // 必须放在 TEXT 之前
+                "CHARSET CHINESE\r\n" +
+                "TEXT 10, 160, \"TSS24.BF2\", 0, 1, 1, \"款号: " + styleNo + "\"\r\n" +
+                "TEXT 10, 210, \"TSS24.BF2\", 0, 1, 1, \"床号: " + bedNo + "\"\r\n" +
+                "TEXT 10, 260, \"TSS24.BF2\", 0, 1, 1, \"扎号: " + String.format("%02d", bundleNo) + "\"\r\n" +
+                "TEXT 10, 310, \"TSS24.BF2\", 0, 1, 1, \"码数: " + size + "\"\r\n" +
+                "TEXT 10, 360, \"TSS24.BF2\", 0, 1, 1, \"数量: " + qty + "\"\r\n" +
+                "TEXT 10, 410, \"TSS24.BF2\", 0, 1, 1, \"颜色: " + color + "\"\r\n" +
+                "TEXT 10, 460, \"TSS24.BF2\", 0, 1, 1, \"----------------------\"\r\n" +
+                "TEXT 10, 490, \"TSS24.BF2\", 0, 1, 1, \"共 " + totalBundles + " 扎, " + totalQuantity + " 件\"\r\n" +
+                "TEXT 10, 520, \"TSS24.BF2\", 0, 1, 1, \"" + customer + " " + dateStr + "\"\r\n" +
                 "PRINT 1, 1\r\n"
 
         try {
-            // 关键：中文标签机强烈建议使用 GBK 编码
-            outputStream?.write(command.toByteArray(charset("GBK")))
+            outputStream?.write(command.toByteArray(charset("GB18030")))
             outputStream?.flush()
         } catch (e: Exception) {
             e.printStackTrace()
