@@ -24,17 +24,19 @@ object BluetoothPrinter {
 
     fun isConnected(): Boolean = socket?.isConnected == true
 
-    // --- 新增：测试打印 ---
+    // --- 极端测试：纯英文，强制使用字体 "1" ---
     fun printTest() {
         if (outputStream == null) return
         try {
-            // 简单的 TSPL 测试指令
             val testCmd = "SIZE 40 mm, 80 mm\r\n" +
                     "GAP 2 mm, 0 mm\r\n" +
                     "DIRECTION 1\r\n" +
                     "CLS\r\n" +
-                    "TEXT 20, 50, \"3\", 0, 1, 1, \"Hello Printer!\"\r\n" +
+                    // 字体 "1" 是大多数打印机的默认内置英文字体
+                    "TEXT 10, 10, \"1\", 0, 1, 1, \"TEST SUCCESS\"\r\n" +
+                    "TEXT 10, 60, \"1\", 0, 1, 1, \"Hello MHT!\"\r\n" +
                     "PRINT 1, 1\r\n"
+            // 测试指令用 UTF-8 或 GBK 都行，纯英文通用
             outputStream?.write(testCmd.toByteArray(Charsets.UTF_8))
             outputStream?.flush()
         } catch (e: Exception) {
@@ -42,33 +44,33 @@ object BluetoothPrinter {
         }
     }
 
-    // --- 正式打印标签 ---
+    // --- 正式打印标签（修正版）---
     fun printTicket(
         customer: String, styleNo: String, ticketNo: String, color: String, size: String, qty: Int,
         bedNo: String, dateStr: String, bundleNo: Int, totalBundles: Int, totalQuantity: Int
     ) {
         if (outputStream == null) return
 
-        // 强制留白 20mm（203dpi 下 20mm 约等于 160 点）
-        // 打印机中文支持：TSS24.BF2 (大)，TSS16.BF2 (小)
-        val command = "\r\n\r\n" + // 先发两个回车唤醒打印机缓冲区
+        // 1. 使用通用字体 "1" 和 "2"
+        // 2. 顶部留白 20mm（Y=160）
+        val command = "\r\n\r\n" +
                 "SIZE 40 mm, 80 mm\r\n" +
                 "GAP 2 mm, 0 mm\r\n" +
                 "DIRECTION 1\r\n" +
                 "CLS\r\n" +
-                "TEXT 10, 160, \"TSS24.BF2\", 0, 1, 1, \"款号: " + styleNo + "\"\r\n" +
-                "TEXT 10, 210, \"TSS24.BF2\", 0, 1, 1, \"床号: " + bedNo + "\"\r\n" +
-                "TEXT 10, 260, \"TSS24.BF2\", 0, 1, 1, \"扎号: " + String.format("%02d", bundleNo) + "\"\r\n" +
-                "TEXT 10, 310, \"TSS24.BF2\", 0, 1, 1, \"码数: " + size + "\"\r\n" +
-                "TEXT 10, 360, \"TSS24.BF2\", 0, 1, 1, \"数量: " + qty + "\"\r\n" +
-                "TEXT 10, 410, \"TSS24.BF2\", 0, 1, 1, \"颜色: " + color + "\"\r\n" +
-                "TEXT 10, 460, \"TSS16.BF2\", 0, 1, 1, \"----------------------\"\r\n" +
-                "TEXT 10, 490, \"TSS16.BF2\", 0, 1, 1, \"共 " + totalBundles + " 扎, " + totalQuantity + " 件\"\r\n" +
-                "TEXT 10, 520, \"TSS16.BF2\", 0, 1, 1, \"" + customer + " " + dateStr + "\"\r\n" +
+                "TEXT 10, 160, \"2\", 0, 1, 1, \"款号: " + styleNo + "\"\r\n" +
+                "TEXT 10, 210, \"2\", 0, 1, 1, \"床号: " + bedNo + "\"\r\n" +
+                "TEXT 10, 260, \"2\", 0, 1, 1, \"扎号: " + String.format("%02d", bundleNo) + "\"\r\n" +
+                "TEXT 10, 310, \"2\", 0, 1, 1, \"码数: " + size + "\"\r\n" +
+                "TEXT 10, 360, \"2\", 0, 1, 1, \"数量: " + qty + "\"\r\n" +
+                "TEXT 10, 410, \"2\", 0, 1, 1, \"颜色: " + color + "\"\r\n" +
+                "TEXT 10, 460, \"1\", 0, 1, 1, \"----------------------\"\r\n" +
+                "TEXT 10, 490, \"1\", 0, 1, 1, \"共 " + totalBundles + " 扎, " + totalQuantity + " 件\"\r\n" +
+                "TEXT 10, 520, \"1\", 0, 1, 1, \"" + customer + " " + dateStr + "\"\r\n" +
                 "PRINT 1, 1\r\n"
 
         try {
-            // 尝试使用 GBK 编码发送，部分打印机中文需要 GBK
+            // 关键：中文标签机强烈建议使用 GBK 编码
             outputStream?.write(command.toByteArray(charset("GBK")))
             outputStream?.flush()
         } catch (e: Exception) {
