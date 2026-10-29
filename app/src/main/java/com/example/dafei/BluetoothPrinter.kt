@@ -26,23 +26,25 @@ object BluetoothPrinter {
 
     // --- 极端测试：纯英文，强制使用字体 "1" ---
     fun printTest() {
-        if (outputStream == null) return
-        try {
-            val testCmd = "SIZE 40 mm, 80 mm\r\n" +
-                    "GAP 2 mm, 0 mm\r\n" +
-                    "DIRECTION 1\r\n" +
-                    "CLS\r\n" +
-                    // 字体 "1" 是大多数打印机的默认内置英文字体
-                    "TEXT 10, 10, \"1\", 0, 1, 1, \"TEST SUCCESS\"\r\n" +
-                    "TEXT 10, 60, \"1\", 0, 1, 1, \"Hello MHT!\"\r\n" +
-                    "PRINT 1, 1\r\n"
-            // 测试指令用 UTF-8 或 GBK 都行，纯英文通用
-            outputStream?.write(testCmd.toByteArray(Charsets.UTF_8))
-            outputStream?.flush()
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
+    if (outputStream == null) return
+    try {
+        val testCmd = "SIZE 40 mm, 80 mm\r\n" +
+                "GAP 2 mm, 0 mm\r\n" +
+                "DIRECTION 1\r\n" +
+                "CLS\r\n" +
+                // 1. 尝试激活 TSPL 模式（部分双模打印机需要此指令切换）
+                "SET TEAR ON\r\n" +
+                // 2. 使用最基础的英文字体 "0" 或 "1"
+                // 3. 坐标使用点阵值 (1mm≈8dots)，40mm宽约320dots
+                "TEXT 20, 20, \"0\", 0, 1, 1, \"TEST SUCCESS\"\r\n" +
+                "TEXT 20, 80, \"0\", 0, 1, 1, \"Hello MHT!\"\r\n" +
+                "PRINT 1, 1\r\n"
+        outputStream?.write(testCmd.toByteArray(Charsets.UTF_8))
+        outputStream?.flush()
+    } catch (e: Exception) {
+        e.printStackTrace()
     }
+}
 
     // --- 正式打印标签（修正版）---
     fun printTicket(
