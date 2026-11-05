@@ -13,8 +13,8 @@ android {
         applicationId = "com.example.dafei"   // 已发布过就保持不变
         minSdk = 24
         targetSdk = 34
-        versionCode = 4
-        versionName = "1.0.4"
+        versionCode = 5
+        versionName = "1.0.5"
     }
 
     // 不用 Compose，可删
@@ -59,6 +59,8 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 
     implementation("com.google.code.gson:gson:2.10.1")
+
+    implementation("androidx.compose.material:material-icons-extended")
 }
 
 //dependencies {

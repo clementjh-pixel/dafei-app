@@ -14,14 +14,23 @@ object BluetoothPrinter {
     private var mPrinter: PrinterInstance? = null
     private var isConnecting = false
 
+    // 👇 新增：连接结果的回调
+    private var connectionCallback: ((Boolean) -> Unit)? = null
+
     private val mHandler = object : Handler(Looper.getMainLooper()) {
         override fun dispatchMessage(msg: Message) {
             super.dispatchMessage(msg)
             when (msg.what) {
-                PrinterConstants.Connect.SUCCESS -> isConnecting = false
+                PrinterConstants.Connect.SUCCESS -> {
+                    isConnecting = false
+                    connectionCallback?.invoke(true) // 👈 连上了，通知 UI
+                    connectionCallback = null
+                }
                 PrinterConstants.Connect.FAILED -> {
                     isConnecting = false
                     mPrinter = null
+                    connectionCallback?.invoke(false) // 👈 失败了，通知 UI
+                    connectionCallback = null
                 }
                 PrinterConstants.Connect.CLOSED -> {
                     isConnecting = false
@@ -31,15 +40,22 @@ object BluetoothPrinter {
         }
     }
 
-    fun connect(context: Context, device: BluetoothDevice): Boolean {
-        return try {
+    // 👇 修改：增加 onResult 回调参数
+    fun connect(context: Context, device: BluetoothDevice, onResult: (Boolean) -> Unit) {
+        if (isConnecting) {
+            onResult(false)
+            return
+        }
+        try {
             isConnecting = true
+            connectionCallback = onResult // 保存回调
             mPrinter = PrinterInstance(context, device, mHandler)
             mPrinter?.openConnection()
-            true
         } catch (e: Exception) {
             e.printStackTrace()
-            false
+            isConnecting = false
+            mPrinter = null
+            onResult(false) // 抛出异常时直接回调失败
         }
     }
 
@@ -119,7 +135,7 @@ object BluetoothPrinter {
         // 采用你实测完美的坐标与排版
         val baseX = if (isRotated) 50 else 20
         val baseY = if (isRotated) 60 else 150
-        val step = 50
+        val step = 55
 
         tickets.forEach { ticket ->
             val tsplCommand = TsplCommand()
@@ -127,16 +143,16 @@ object BluetoothPrinter {
             tsplCommand.initCanvas(40, 80)
             tsplCommand.setDirection(if (isRotated) 0 else 1)
 
-            tsplCommand.setText(baseX, baseY, 1, 1, "款号: ${ticket.styleNo}")
-            tsplCommand.setText(baseX, baseY + step, 1, 1, "床号: ${ticket.bedNo}")
-            tsplCommand.setText(baseX, baseY + step * 2, 1, 1, "扎号: ${String.format("%02d", ticket.bundleNo)}")
-            tsplCommand.setText(baseX, baseY + step * 3, 1, 1, "码数: ${ticket.size}")
+            tsplCommand.setText(baseX, baseY, 1, 2, "款号: ${ticket.styleNo}")
+            tsplCommand.setText(baseX, baseY + step, 1, 2, "床号: ${ticket.bedNo}")
+            tsplCommand.setText(baseX, baseY + step * 2, 1, 2, "扎号: ${String.format("%02d", ticket.bundleNo)}")
+            tsplCommand.setText(baseX, baseY + step * 3, 1, 2, "码数: ${ticket.size}")
             tsplCommand.setText(baseX, baseY + step * 4, 2, 2, "数量: ${ticket.quantity}")
-            tsplCommand.setText(baseX, baseY + step * 5 + 20, 1, 1, "颜色: ${ticket.color}")
+            tsplCommand.setText(baseX, baseY + step * 5 + 5, 1, 2, "颜色: ${ticket.color}")
 
-            tsplCommand.setText(baseX, baseY + step * 6 + 10, 1, 1, "--------------------")
-            tsplCommand.setText(baseX, baseY + step * 7, 1, 1, "共 ${ticket.totalBundles} 扎, 总 ${ticket.totalQuantity} 件")
-            tsplCommand.setText(baseX, baseY + step * 8, 1, 1, "${ticket.customer}  ${ticket.dateStr}")
+            tsplCommand.setText(baseX, baseY + step * 6, 1, 1, "--------------------")
+            tsplCommand.setText(baseX, baseY + step * 7-30, 1, 1, "共 ${ticket.totalBundles} 扎, 总 ${ticket.totalQuantity} 件")
+            tsplCommand.setText(baseX, baseY + step * 8-45, 1, 1, "${ticket.customer}  ${ticket.dateStr}")
 
             tsplCommand.setPrintNumber(1)
 
