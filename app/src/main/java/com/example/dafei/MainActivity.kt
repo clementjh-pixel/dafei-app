@@ -93,6 +93,16 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.ui.zIndex
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.TextUnit
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.focus.FocusState
+
 
 
 //logo图Base64
@@ -352,6 +362,108 @@ fun decodeBase64ToBitmap(base64Str: String): Bitmap? {
     } catch (e: Exception) {
         Log.e("打菲助手", "Logo图片解码失败", e) // 👈 加在这里
         null
+    }
+}
+
+// 只读文字：宽度固定，优先换行，换行超阈值才缩字号，字号有下限，完整显示不截断
+@Composable
+fun AutoFitWrappedText(
+    text: String,
+    modifier: Modifier = Modifier,
+    maxFontSize: TextUnit = 14.sp,
+    minFontSize: TextUnit = 10.sp,
+    maxPreferredLines: Int = 3,
+    textAlign: TextAlign = TextAlign.Center,
+    color: Color = Color.Black
+) {
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    val hPadPx = with(density) { 4.dp.toPx() }
+
+    BoxWithConstraints(modifier, contentAlignment = Alignment.Center) {
+        val availWidthPx = (constraints.maxWidth - hPadPx * 2).coerceAtLeast(1f)
+
+        val fontSize = remember(text, availWidthPx, maxFontSize, minFontSize, maxPreferredLines) {
+            var size = maxFontSize
+            while (true) {
+                val layout = measurer.measure(
+                    text = AnnotatedString(text),
+                    style = TextStyle(fontSize = size, textAlign = textAlign),
+                    constraints = Constraints(maxWidth = availWidthPx.toInt()),
+                    softWrap = true,
+                    maxLines = Int.MAX_VALUE
+                )
+                if (layout.lineCount <= maxPreferredLines || size.value <= minFontSize.value) break
+                size = (size.value - 0.5f).sp
+            }
+            size
+        }
+
+        Text(
+            text = text,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
+            fontSize = fontSize,
+            textAlign = textAlign,
+            color = color,
+            softWrap = true,
+            maxLines = Int.MAX_VALUE
+        )
+    }
+}
+
+// 可编辑输入框：同策略，宽度固定、优先换行、超阈值缩字号、下限保可读、完整显示
+@Composable
+fun AutoFitWrappedBasicTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    maxFontSize: TextUnit = 14.sp,
+    minFontSize: TextUnit = 10.sp,
+    maxPreferredLines: Int = 3,
+    textAlign: TextAlign = TextAlign.Center,
+    keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
+    onFocusChanged: ((FocusState) -> Unit)? = null
+) {
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    val hPadPx = with(density) { 4.dp.toPx() }
+
+    BoxWithConstraints(modifier, contentAlignment = Alignment.Center) {
+        val availWidthPx = (constraints.maxWidth - hPadPx * 2).coerceAtLeast(1f)
+
+        val fontSize = remember(value, availWidthPx, maxFontSize, minFontSize, maxPreferredLines) {
+            var size = maxFontSize
+            val sample = if (value.isEmpty()) " " else value
+            while (true) {
+                val layout = measurer.measure(
+                    text = AnnotatedString(sample),
+                    style = TextStyle(fontSize = size, textAlign = textAlign),
+                    constraints = Constraints(maxWidth = availWidthPx.toInt()),
+                    softWrap = true,
+                    maxLines = Int.MAX_VALUE
+                )
+                if (layout.lineCount <= maxPreferredLines || size.value <= minFontSize.value) break
+                size = (size.value - 0.5f).sp
+            }
+            size
+        }
+
+        BasicTextField(
+            value = value,
+            onValueChange = onValueChange,
+            singleLine = false,
+            keyboardOptions = keyboardOptions,
+            textStyle = TextStyle(textAlign = textAlign, fontSize = fontSize, color = Color.Black),
+            modifier = Modifier
+                .fillMaxWidth()
+                .then(if (onFocusChanged != null) Modifier.onFocusChanged(onFocusChanged) else Modifier),
+            decorationBox = { innerTextField ->
+                Box(
+                    Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp),
+                    contentAlignment = Alignment.Center
+                ) { innerTextField() }
+            }
+        )
     }
 }
 
@@ -999,10 +1111,27 @@ fun GenerateScreen(
             rowList.forEachIndexed { index, row ->
                 key(index) {
                     Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier.weight(1.5f).height(36.dp).border(1.dp, Color(0xFFFF9800), MaterialTheme.shapes.extraSmall),
-                            contentAlignment = Alignment.Center
-                        ) { Text(row.color, fontSize = 14.sp, textAlign = TextAlign.Center, color = Color.Black) }
+//                        Box(
+//                            modifier = Modifier.weight(1.5f).height(36.dp).border(1.dp, Color(0xFFFF9800), MaterialTheme.shapes.extraSmall),
+//                            contentAlignment = Alignment.Center
+//                        ) { Text(
+//                            row.color,
+//                            fontSize = 14.sp,
+//                            textAlign = TextAlign.Center,
+//                            color = Color.Black
+//                        )
+//                        }
+
+                        AutoFitWrappedText(
+                            text = row.color,
+                            modifier = Modifier
+                                .weight(1.5f)
+                                .heightIn(min = 36.dp)   // ← 关键：min 而不是固定 height
+                                .border(1.dp, Color(0xFFFF9800), MaterialTheme.shapes.extraSmall),
+                            maxFontSize = 14.sp,
+                            minFontSize = 10.sp,
+                            maxPreferredLines = 3
+                        )
 
                         selectedSizes.value.forEachIndexed { colIndex, size ->
                             val currentKey = "$size-$colIndex"
@@ -1416,36 +1545,83 @@ fun CombinedGenerateScreen(historyOrders: List<CutOrderData>, onGenerate: (CutOr
 
                     // 款号输入框（带下拉）
                     Box(modifier = Modifier.weight(1.2f)) {
-                        BasicTextField(
+                        var expanded by remember { mutableStateOf(false) }
+
+                        AutoFitWrappedBasicTextField(
                             value = row.styleNo,
                             onValueChange = { newVal -> rowList[index] = row.copy(styleNo = newVal) },
-                            textStyle = androidx.compose.ui.text.TextStyle(textAlign = TextAlign.Center, fontSize = 14.sp, color = Color.Black),
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth().height(36.dp).border(1.dp, Color(0xFFFF9800), MaterialTheme.shapes.extraSmall).onFocusChanged { focusState ->
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 36.dp)   // ← 关键
+                                .border(1.dp, Color(0xFFFF9800), MaterialTheme.shapes.extraSmall),
+                            maxFontSize = 14.sp,
+                            minFontSize = 10.sp,
+                            maxPreferredLines = 3,
+                            onFocusChanged = { focusState ->
                                 if (focusState.isFocused && parsedStyleNos.isNotEmpty()) expanded = true
-                            },
-                            decorationBox = { innerTextField -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { innerTextField() } }
+                            }
                         )
-                        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, modifier = Modifier.background(Color.White)) {
+
+                        DropdownMenu(
+                            expanded = expanded,
+                            onDismissRequest = { expanded = false },
+                            modifier = Modifier.background(Color.White)
+                        ) {
                             parsedStyleNos.forEach { style ->
                                 DropdownMenuItem(
                                     text = { Text(style, fontSize = 14.sp) },
-                                    onClick = { rowList[index] = row.copy(styleNo = style); expanded = false; focusManager.clearFocus() }
+                                    onClick = {
+                                        rowList[index] = row.copy(styleNo = style)
+                                        expanded = false
+                                        focusManager.clearFocus()
+                                    }
                                 )
                             }
                         }
                     }
                     Spacer(Modifier.width(4.dp))
+//                    Box(modifier = Modifier.weight(1.2f)) {
+//                        BasicTextField(
+//                            value = row.styleNo,
+//                            onValueChange = { newVal -> rowList[index] = row.copy(styleNo = newVal) },
+//                            textStyle = androidx.compose.ui.text.TextStyle(textAlign = TextAlign.Center, fontSize = 14.sp, color = Color.Black),
+//                            singleLine = true,
+//                            modifier = Modifier.fillMaxWidth().height(36.dp).border(1.dp, Color(0xFFFF9800), MaterialTheme.shapes.extraSmall).onFocusChanged { focusState ->
+//                                if (focusState.isFocused && parsedStyleNos.isNotEmpty()) expanded = true
+//                            },
+//                            decorationBox = { innerTextField -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { innerTextField() } }
+//                        )
+//                        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, modifier = Modifier.background(Color.White)) {
+//                            parsedStyleNos.forEach { style ->
+//                                DropdownMenuItem(
+//                                    text = { Text(style, fontSize = 14.sp) },
+//                                    onClick = { rowList[index] = row.copy(styleNo = style); expanded = false; focusManager.clearFocus() }
+//                                )
+//                            }
+//                        }
+//                    }
+//                    Spacer(Modifier.width(4.dp))
 
                     // 颜色输入框
-                    BasicTextField(
+                    AutoFitWrappedBasicTextField(
                         value = row.color,
                         onValueChange = { newVal -> rowList[index] = row.copy(color = newVal) },
-                        textStyle = androidx.compose.ui.text.TextStyle(textAlign = TextAlign.Center, fontSize = 14.sp, color = Color.Black),
-                        singleLine = true,
-                        modifier = Modifier.weight(1.2f).height(36.dp).border(1.dp, Color(0xFFFF9800), MaterialTheme.shapes.extraSmall),
-                        decorationBox = { innerTextField -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { innerTextField() } }
+                        modifier = Modifier
+                            .weight(1.2f)
+                            .heightIn(min = 36.dp)   // ← 关键
+                            .border(1.dp, Color(0xFFFF9800), MaterialTheme.shapes.extraSmall),
+                        maxFontSize = 14.sp,
+                        minFontSize = 10.sp,
+                        maxPreferredLines = 3
                     )
+//                    BasicTextField(
+//                        value = row.color,
+//                        onValueChange = { newVal -> rowList[index] = row.copy(color = newVal) },
+//                        textStyle = androidx.compose.ui.text.TextStyle(textAlign = TextAlign.Center, fontSize = 14.sp, color = Color.Black),
+//                        singleLine = true,
+//                        modifier = Modifier.weight(1.2f).height(36.dp).border(1.dp, Color(0xFFFF9800), MaterialTheme.shapes.extraSmall),
+//                        decorationBox = { innerTextField -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { innerTextField() } }
+//                    )
 
                     // 各码数件数
                     selectedSizes.value.forEachIndexed { colIndex, size ->
