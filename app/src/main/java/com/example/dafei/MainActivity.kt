@@ -28,7 +28,6 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -65,23 +64,18 @@ import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
 import android.util.Log
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.core.content.edit
-import androidx.compose.material.icons.filled.ConfirmationNumber
-import androidx.compose.material.icons.filled.Style
-import androidx.compose.material.icons.filled.ReceiptLong
 import android.graphics.Canvas
 import android.graphics.Paint
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.ui.platform.LocalDensity
@@ -94,14 +88,13 @@ import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.ui.zIndex
 import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.TextUnit
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.focus.FocusState
+import androidx.compose.runtime.rememberCoroutineScope
 
 
 
@@ -366,6 +359,7 @@ fun decodeBase64ToBitmap(base64Str: String): Bitmap? {
 }
 
 // 只读文字：宽度固定，优先换行，换行超阈值才缩字号，字号有下限，完整显示不截断
+@SuppressLint("UnusedBoxWithConstraintsScope")
 @Composable
 fun AutoFitWrappedText(
     text: String,
@@ -494,16 +488,46 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        requestBluetoothPermissions()
 
-        // 👇 新增：动态注册蓝牙断开广播
+        // 1. 蓝牙相关初始化
+        requestBluetoothPermissions()
         val filter = IntentFilter(BluetoothDevice.ACTION_ACL_DISCONNECTED)
         registerReceiver(bluetoothReceiver, filter)
 
+        // 2. 初始化网络客户端（用于读取保存的 Token）
+        NetworkClient.init(this)
+
+        // 3. 读取本地的账号缓存
+        val authPrefs = getSharedPreferences("dafei_auth", Context.MODE_PRIVATE)
+
         setContent {
             MaterialTheme {
-                // 注意：如果你之前 AppRoot 需要两个参数，请按你的实际代码补齐
-                AppRoot(connectedDeviceName)
+                // 👇 引入一个明确控制当前登录状态的 State
+                var isLoggedIn by remember { mutableStateOf(NetworkClient.token != null) }
+
+                if (!isLoggedIn) {
+                    LoginScreen(
+                        onLoginSuccess = { username ->
+                            // 登录成功，保存账号，并更新状态触发界面跳转
+                            authPrefs.edit().putString("logged_in_user", username).apply()
+                            isLoggedIn = true
+                        }
+                    )
+                } else {
+                    // 从本地读取缓存的账号，如果没有则默认 "admin"
+                    val currentUser = authPrefs.getString("logged_in_user", "admin") ?: "admin"
+
+                    AppRoot(
+                        connectedDeviceName = connectedDeviceName,
+                        currentUser = currentUser,
+                        onLogout = {
+                            // 退出登录：清空 Token 和本地缓存，触发跳转回登录页
+                            NetworkClient.token = null
+                            authPrefs.edit().remove("logged_in_user").apply()
+                            isLoggedIn = false
+                        }
+                    )
+                }
             }
         }
     }
@@ -559,99 +583,89 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun AppRoot(connectedDeviceName: String?) {
-    val context = LocalContext.current
-    val prefs = remember { context.getSharedPreferences("dafei_auth", Context.MODE_PRIVATE) }
-    var currentUser by remember { mutableStateOf(prefs.getString("logged_in_user", null)) }
-
-    if (currentUser == null) {
-        LoginScreen { username ->
-            prefs.edit { putString("logged_in_user", username) }
-            currentUser = username
-        }
-    } else {
-        // 👇 核心修复：严格按照 MainAppScreen 的 4 个参数顺序传参
-        MainAppScreen(
-            connectedDeviceName = connectedDeviceName,
-            currentUser = currentUser!!,
-            onLogout = {
-                prefs.edit { remove("logged_in_user") }
-                currentUser = null
-            }
-        )
-    }
+fun AppRoot(
+    connectedDeviceName: String?,
+    currentUser: String,
+    onLogout: () -> Unit
+) {
+    // 不再判断是否登录，直接进入主界面
+    MainAppScreen(
+        connectedDeviceName = connectedDeviceName,
+        currentUser = currentUser,
+        onLogout = onLogout
+    )
 }
 
-@Composable
-fun LoginScreen(onLoginSuccess: (String) -> Unit) {
-    val context = LocalContext.current
-    val prefs = remember { context.getSharedPreferences("dafei_users", Context.MODE_PRIVATE) }
-    var isLogin by remember { mutableStateOf(true) }
-    var username by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
-
-    Column(
-        Modifier
-            .fillMaxSize()
-            .padding(32.dp)
-            .imePadding(),
-        Arrangement.Center,
-        Alignment.CenterHorizontally
-    ) {
-        Text(
-            if (isLogin) "欢迎回来" else "注册新账号",
-            fontSize = 28.sp,
-            fontWeight = FontWeight.Bold,
-            color = Color(0xFF1565C0)
-        )
-        Spacer(Modifier.height(32.dp))
-        OutlinedTextField(
-            username,
-            { username = it },
-            label = { Text("账号") },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true
-        )
-        Spacer(Modifier.height(16.dp))
-        OutlinedTextField(
-            password,
-            { password = it },
-            label = { Text("密码") },
-            modifier = Modifier.fillMaxWidth(),
-            visualTransformation = PasswordVisualTransformation(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-            singleLine = true
-        )
-        Spacer(Modifier.height(32.dp))
-        Button(
-            onClick = {
-                if (username.isBlank() || password.isBlank()) {
-                    Toast.makeText(context, "不能为空", Toast.LENGTH_SHORT).show(); return@Button
-                }
-                if (isLogin) {
-                    if (prefs.getString(username, null) == password) onLoginSuccess(username)
-                    else Toast.makeText(context, "账号或密码错误", Toast.LENGTH_SHORT).show()
-                } else {
-                    if (prefs.contains(username)) Toast.makeText(
-                        context,
-                        "该账号已存在",
-                        Toast.LENGTH_SHORT
-                    ).show()
-                    else {
-                        prefs.edit { putString(username, password) }
-                        Toast.makeText(context, "注册成功", Toast.LENGTH_SHORT).show()
-                        isLogin = true
-                    }
-                }
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(50.dp)
-        ) { Text(if (isLogin) "登录" else "注册", fontSize = 16.sp) }
-        Spacer(Modifier.height(16.dp))
-        TextButton(onClick = { isLogin = !isLogin }) { Text(if (isLogin) "去注册" else "去登录") }
-    }
-}
+//@Composable单机版本登录
+//fun LoginScreen(onLoginSuccess: (String) -> Unit) {
+//    val context = LocalContext.current
+//    val prefs = remember { context.getSharedPreferences("dafei_users", Context.MODE_PRIVATE) }
+//    var isLogin by remember { mutableStateOf(true) }
+//    var username by remember { mutableStateOf("") }
+//    var password by remember { mutableStateOf("") }
+//
+//    Column(
+//        Modifier
+//            .fillMaxSize()
+//            .padding(32.dp)
+//            .imePadding(),
+//        Arrangement.Center,
+//        Alignment.CenterHorizontally
+//    ) {
+//        Text(
+//            if (isLogin) "欢迎回来" else "注册新账号",
+//            fontSize = 28.sp,
+//            fontWeight = FontWeight.Bold,
+//            color = Color(0xFF1565C0)
+//        )
+//        Spacer(Modifier.height(32.dp))
+//        OutlinedTextField(
+//            username,
+//            { username = it },
+//            label = { Text("账号") },
+//            modifier = Modifier.fillMaxWidth(),
+//            singleLine = true
+//        )
+//        Spacer(Modifier.height(16.dp))
+//        OutlinedTextField(
+//            password,
+//            { password = it },
+//            label = { Text("密码") },
+//            modifier = Modifier.fillMaxWidth(),
+//            visualTransformation = PasswordVisualTransformation(),
+//            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+//            singleLine = true
+//        )
+//        Spacer(Modifier.height(32.dp))
+//        Button(
+//            onClick = {
+//                if (username.isBlank() || password.isBlank()) {
+//                    Toast.makeText(context, "不能为空", Toast.LENGTH_SHORT).show(); return@Button
+//                }
+//                if (isLogin) {
+//                    if (prefs.getString(username, null) == password) onLoginSuccess(username)
+//                    else Toast.makeText(context, "账号或密码错误", Toast.LENGTH_SHORT).show()
+//                } else {
+//                    if (prefs.contains(username)) Toast.makeText(
+//                        context,
+//                        "该账号已存在",
+//                        Toast.LENGTH_SHORT
+//                    ).show()
+//                    else {
+//                        prefs.edit { putString(username, password) }
+//                        Toast.makeText(context, "注册成功", Toast.LENGTH_SHORT).show()
+//                        isLogin = true
+//                    }
+//                }
+//            },
+//            modifier = Modifier
+//                .fillMaxWidth()
+//                .height(50.dp)
+//        ) { Text(if (isLogin) "登录" else "注册", fontSize = 16.sp) }
+//        Spacer(Modifier.height(16.dp))
+//        TextButton(onClick = { isLogin = !isLogin }) { Text(if (isLogin) "去注册" else "去登录") }
+//    }
+//}
 
 @SuppressLint("MissingPermission")
 @OptIn(ExperimentalMaterial3Api::class)
@@ -669,6 +683,65 @@ fun MainAppScreen(connectedDeviceName: String?, currentUser: String, onLogout: (
         } else mutableStateListOf()
     }
     fun saveHistory() { prefs.edit { putString("history_orders", gson.toJson(historyOrders)) } }
+
+    // 👇 新增：同步状态和协程
+    var isSyncing by remember { mutableStateOf(false) }
+    val syncScope = rememberCoroutineScope()
+
+    // 👇 新增：核心同步函数
+    fun doSync() {
+        if (isSyncing) return
+        isSyncing = true
+        syncScope.launch(Dispatchers.IO) {
+            try {
+                // 1. 将本地数据推送到云端
+                val pushList = historyOrders.map { SyncPushReq(it.id, gson.toJson(it), it.time) }
+                NetworkClient.api.pushData(pushList)
+
+                // 2. 从云端拉取最新数据
+                val remoteData = NetworkClient.api.pullData()
+                val remoteMap = remoteData.associateBy { it.cutId }
+                val localIds = historyOrders.map { it.id }.toSet()
+
+                val mergedList = mutableListOf<CutOrderData>()
+
+                // 3. 比较并合并数据（云端较新的覆盖本地，本地独有的保留）
+                remoteData.forEach { remote ->
+                    val local = historyOrders.find { it.id == remote.cutId }
+                    val remoteOrder = gson.fromJson(remote.jsonData, CutOrderData::class.java)
+                    if (local == null || remote.time > local.time) {
+                        mergedList.add(remoteOrder) // 云端新数据
+                    } else {
+                        mergedList.add(local) // 本地较新
+                    }
+                }
+                historyOrders.forEach { local ->
+                    if (!remoteMap.containsKey(local.id)) mergedList.add(local)
+                }
+
+                // 4. 更新 UI 和本地缓存
+                withContext(Dispatchers.Main) {
+                    mergedList.sortByDescending { it.time }
+                    historyOrders.clear()
+                    historyOrders.addAll(mergedList)
+                    saveHistory()
+                    Toast.makeText(context, "云端同步成功！", Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, "同步失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
+            } finally {
+                withContext(Dispatchers.Main) { isSyncing = false }
+            }
+        }
+    }
+
+    // 👇 可选：进入主界面自动同步一次
+    LaunchedEffect(Unit) {
+        doSync()
+    }
 
     var currentTab by remember { mutableIntStateOf(0) }
     var showBluetoothDialog by remember { mutableStateOf(false) }
@@ -772,17 +845,52 @@ fun MainAppScreen(connectedDeviceName: String?, currentUser: String, onLogout: (
                             TextButton(onClick = onLogout) { Text("退出", color = Color.White) }
                         }
                     } else if (currentTab == 1) {
-                        if (connectedDeviceName != null) {
-                            TextButton(onClick = { if (BluetoothPrinter.isConnected()) BluetoothPrinter.printTest() }) { Text("测试", color = Color.Yellow) }
+                        if (editingOrder != null) {
+                            TextButton(onClick = { editingOrder = null; currentTab = 2 }) {
+                                Text("取消编辑", color = Color.Yellow, fontWeight = FontWeight.Bold)
+                            }
+                        } else {
+                            if (connectedDeviceName != null) {
+                                TextButton(onClick = { if (BluetoothPrinter.isConnected()) BluetoothPrinter.printTest() }) { Text("测试", color = Color.Yellow) }
+                            }
+                            TextButton(onClick = {
+                                if (activity.getPairedDevices().isEmpty()) Toast.makeText(context, "请先配对蓝牙", Toast.LENGTH_SHORT).show()
+                                else { pairedDevices.value = activity.getPairedDevices(); showBluetoothDialog = true }
+                            }) { Text(text = connectedDeviceName ?: "未连接", color = Color.White) }
+                            TextButton(onClick = onLogout) { Text("退出", color = Color.White) }
                         }
-                        TextButton(onClick = {
-                            if (activity.getPairedDevices().isEmpty()) Toast.makeText(context, "请先配对蓝牙", Toast.LENGTH_SHORT).show()
-                            else { pairedDevices.value = activity.getPairedDevices(); showBluetoothDialog = true }
-                        }) { Text(text = connectedDeviceName ?: "未连接", color = Color.White) }
-                        TextButton(onClick = onLogout) { Text("退出", color = Color.White) }
-                    } else if (currentTab == 2 && !isInDetailPage) {
-                        TextButton(onClick = { isExportMode = true; selectedExportIds = emptySet() }) { Text("导出", color = Color.White) }
-                        TextButton(onClick = { importLauncher.launch(arrayOf("application/json", "text/plain", "*/*")) }) { Text("导入", color = Color.White) }
+                    }
+                    else if (currentTab == 2 && !isInDetailPage) {
+                        // 👇 加入这个同步按钮
+                        if (isSyncing) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(end = 8.dp)
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp), // 稍微调小一点
+                                    color = Color.White,
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("同步中...", color = Color.White, fontSize = 13.sp)
+                            }
+                        } else {
+                            TextButton(onClick = { doSync() }) {
+                                Text("同步", color = Color.White)
+                            }
+                        }
+                        TextButton(
+                            onClick =
+                                {
+                                    isExportMode = true;
+                                    selectedExportIds = emptySet()
+                                }){ Text("导出", color = Color.White) }
+                        TextButton(
+                            onClick = {
+                                importLauncher.launch(
+                                    arrayOf("application/json", "text/plain", "*/*")
+                                ) }) { Text("导入", color = Color.White) }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF1565C0), titleContentColor = Color.White)
@@ -832,9 +940,21 @@ fun MainAppScreen(connectedDeviceName: String?, currentUser: String, onLogout: (
                     onCancelEdit = { editingOrder = null; currentTab = 2 }
                 )
             } else if (currentTab == 1) {
-                CombinedGenerateScreen(historyOrders) { newOrder ->
-                    historyOrders.add(0, newOrder); saveHistory(); currentTab = 2
-                }
+                CombinedGenerateScreen(
+                    historyOrders = historyOrders,
+                    editingOrder = editingOrder, // 👈 传入编辑对象
+                    onGenerate = { newOrder ->
+                        if (editingOrder != null) {
+                            val oldIndex = historyOrders.indexOfFirst { it.id == editingOrder!!.id }
+                            if (oldIndex != -1) historyOrders.removeAt(oldIndex)
+                            editingOrder = null
+                        }
+                        historyOrders.add(0, newOrder)
+                        saveHistory()
+                        currentTab = 2
+                    },
+                    onCancelEdit = { editingOrder = null; currentTab = 2 }
+                )
             } else {
                 HistoryListScreen(
                     historyOrders = historyOrders,
@@ -843,7 +963,13 @@ fun MainAppScreen(connectedDeviceName: String?, currentUser: String, onLogout: (
                     onToggleSelection = { id -> selectedExportIds = if (selectedExportIds.contains(id)) selectedExportIds - id else selectedExportIds + id },
                     onDetailStatusChanged = { isInDetail -> isInDetailPage = isInDetail },
                     onDelete = { index -> historyOrders.removeAt(index); saveHistory(); Toast.makeText(context, "已删除", Toast.LENGTH_SHORT).show() },
-                    onEdit = { order -> editingOrder = order; currentTab = 0 },
+                    //onEdit = { order -> editingOrder = order; currentTab = 0 },
+                    onEdit = { order ->
+                        editingOrder = order
+                        // 👇 判断：如果是套排（其 rawRows 的 color 字段包含了 "款号-"），跳转到 1，否则单排跳 0
+                        val isCombined = order.rawRows.any { it.color.contains("-") }
+                        currentTab = if (isCombined) 1 else 0
+                    },
                     onExportSingle = { order ->
                         orderToExportSingle = order
                         val dateStr = SimpleDateFormat("yyyyMMdd_HHmm", Locale.CHINA).format(Date())
@@ -955,14 +1081,42 @@ fun GenerateScreen(
 
     var showImageSourceDialog by remember { mutableStateOf(false) }
 
-    LaunchedEffect(dateStr, historyOrders) {
-        if (editingOrder == null && bedNo.isEmpty()) {
-            val currentMonthPrefix = dateStr.take(5)
-            val monthOrders = historyOrders.filter { it.dateStr.startsWith(currentMonthPrefix) }
-            val maxBedNo = monthOrders.mapNotNull { it.bedNo.toIntOrNull() }.maxOrNull() ?: 0
-            bedNo = (maxBedNo + 1).toString()
+//    LaunchedEffect(dateStr, historyOrders) {
+//        if (editingOrder == null && bedNo.isEmpty()) {
+//            val currentMonthPrefix = dateStr.take(5)
+//            val monthOrders = historyOrders.filter { it.dateStr.startsWith(currentMonthPrefix) }
+//            val maxBedNo = monthOrders.mapNotNull { it.bedNo.toIntOrNull() }.maxOrNull() ?: 0
+//            bedNo = (maxBedNo + 1).toString()
+//        }
+//    }
+
+    val scope = rememberCoroutineScope()
+    var isFetchingBedNo by remember { mutableStateOf(false) }
+
+    // 调用云端获取床号
+    fun fetchCloudBedNo() {
+        if (editingOrder != null) return // 编辑模式不需要重新要号
+        isFetchingBedNo = true
+        scope.launch {
+            try {
+                val monthPrefix = dateStr.take(5)
+                val res = NetworkClient.api.getNextBedNo(monthPrefix)
+                bedNo = res["bedNo"] ?: ""
+            } catch (e: Exception) {
+                Toast.makeText(context, "获取云端床号失败，请检查网络！", Toast.LENGTH_LONG).show()
+            } finally {
+                isFetchingBedNo = false
+            }
         }
     }
+
+    // 页面刚进来，或者日期改变时，自动去云端拉号
+    LaunchedEffect(dateStr) {
+        if (editingOrder == null) {
+            fetchCloudBedNo()
+        }
+    }
+
 
     val presetSizes = remember { mutableStateOf(prefs.getStringSet("sizes", setOf("S", "M", "L", "XL"))?.toMutableList() ?: mutableListOf()) }
     val presetColors = remember { mutableStateOf(prefs.getStringSet("colors", setOf("黑色", "白色", "杏色"))?.toMutableList() ?: mutableListOf()) }
@@ -975,7 +1129,10 @@ fun GenerateScreen(
     }
     val rowList = remember(editingOrder) {
         val list = mutableStateListOf<RowInputData>()
-        editingOrder?.rawRows?.forEach { list.add(it.copy(quantities = it.quantities.toMutableMap())) }
+        editingOrder?.rawRows?.forEach {
+            list.add(
+                it.copy(quantities = it.quantities.toMutableMap()))
+        }
         list
     }
 
@@ -1024,7 +1181,23 @@ fun GenerateScreen(
                         }
                     }
                 }
-                OutlinedTextField(bedNo, { bedNo = it }, label = { Text("床号") }, modifier = Modifier.weight(1f), singleLine = true)
+                //OutlinedTextField(bedNo, { bedNo = it }, label = { Text("床号") }, modifier = Modifier.weight(1f), singleLine = true)
+                Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = bedNo,
+                        onValueChange = { bedNo = it },
+                        label = { Text("床号") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        trailingIcon = {
+                            if (isFetchingBedNo) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                            } else {
+                                TextButton(onClick = { fetchCloudBedNo() }) { Text("刷新", fontSize = 12.sp) }
+                            }
+                        }
+                    )
+                }
             }
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1344,23 +1517,40 @@ fun GenerateScreen(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun CombinedGenerateScreen(historyOrders: List<CutOrderData>, onGenerate: (CutOrderData) -> Unit) {
+fun CombinedGenerateScreen(
+    historyOrders: List<CutOrderData>,
+    editingOrder: CutOrderData? = null, // 👈 1. 新增接收编辑对象
+    onGenerate: (CutOrderData) -> Unit,
+    onCancelEdit: () -> Unit = {}       // 👈 2. 新增取消编辑回调
+) {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
     val prefs = remember { context.getSharedPreferences("dafei_prefs", Context.MODE_PRIVATE) }
 
-    // 基础信息
-    var customer by remember { mutableStateOf("") }
-    var bedNo by remember { mutableStateOf("") }
-    var dateStr by remember { mutableStateOf(SimpleDateFormat("yy-MM-dd", Locale.CHINA).format(Date())) }
-    var continuousBundle by remember { mutableStateOf(false) }
+    // 👇 基础信息（加上旧数据回显）
+    var customer by remember(editingOrder) { mutableStateOf(editingOrder?.customer ?: "") }
+    var bedNo by remember(editingOrder) { mutableStateOf(editingOrder?.bedNo ?: "") }
+    var dateStr by remember(editingOrder) { mutableStateOf(editingOrder?.dateStr ?: SimpleDateFormat("yy-MM-dd", Locale.CHINA).format(Date())) }
+    var continuousBundle by remember(editingOrder) { mutableStateOf(false) }
+    var topStyleNoText by remember(editingOrder) { mutableStateOf(editingOrder?.styleNo ?: "") }
 
-    // 👇 1. 多图状态
-    val imageList = remember { mutableStateListOf<String>() }
+    // 👇 多图状态（加上旧数据回显）
+    val imageList = remember(editingOrder) {
+        val list = mutableStateListOf<String>()
+        val oldData = editingOrder?.imageBase64
+        if (oldData != null) {
+            try {
+                if (oldData.startsWith("[")) list.addAll(Gson().fromJson(oldData, Array<String>::class.java).toList())
+                else list.add(oldData)
+            } catch (e: Exception) { list.add(oldData) }
+        }
+        list
+    }
+
     var cameraUri by remember { mutableStateOf<Uri?>(null) }
     var showImageSourceDialog by remember { mutableStateOf(false) }
 
-    // 图片选择器
+    // 图片选择器（保持不变）
     val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris: List<Uri> ->
         if (uris.isNotEmpty()) {
             val remaining = 5 - imageList.size
@@ -1397,8 +1587,7 @@ fun CombinedGenerateScreen(historyOrders: List<CutOrderData>, onGenerate: (CutOr
         } else Toast.makeText(context, "需要相机权限", Toast.LENGTH_SHORT).show()
     }
 
-    // 👇 2. 套排款号及解析
-    var topStyleNoText by remember { mutableStateOf("") }
+    // 套排款号及解析
     val parsedStyleNos = remember(topStyleNoText) {
         topStyleNoText.split(",", "，").map { it.trim() }.filter { it.isNotBlank() }
     }
@@ -1408,35 +1597,92 @@ fun CombinedGenerateScreen(historyOrders: List<CutOrderData>, onGenerate: (CutOr
     // 预设颜色、码数
     val presetSizes = remember { mutableStateOf(prefs.getStringSet("sizes", setOf("S", "M", "L", "XL"))?.toMutableList() ?: mutableListOf()) }
     val presetColors = remember { mutableStateOf(prefs.getStringSet("colors", setOf("黑色", "白色", "杏色"))?.toMutableList() ?: mutableListOf()) }
-    val selectedSizes = remember { mutableStateOf(listOf<String>()) }
 
-    val rowList = remember { mutableStateListOf<CombinedRowInputData>() }
-    val selectedColorsOrder = remember { mutableStateListOf<String>() }
+    // 👇 码数和表格数据回显
+    val selectedSizes = remember(editingOrder) { mutableStateOf(editingOrder?.sizesOrder ?: listOf<String>()) }
 
-    // 床号自动递增
-    LaunchedEffect(dateStr, historyOrders) {
-        if (bedNo.isEmpty()) {
-            val currentMonthPrefix = dateStr.take(5)
-            val monthOrders = historyOrders.filter { it.dateStr.startsWith(currentMonthPrefix) }
-            val maxBedNo = monthOrders.mapNotNull { it.bedNo.toIntOrNull() }.maxOrNull() ?: 0
-            bedNo = (maxBedNo + 1).toString()
+    val rowList = remember(editingOrder) {
+        val list = mutableStateListOf<CombinedRowInputData>()
+
+        // 👇 1. 先把订单中保存的所有款号拆成一个列表，用来精准比对
+        val knownStyleNos = editingOrder?.styleNo?.split(",", "，")?.map { it.trim() }?.filter { it.isNotBlank() } ?: emptyList()
+
+        editingOrder?.rawRows?.forEach { row ->
+            val colorStr = row.color
+
+            // 👇 2. 在已知款号中寻找，看它是不是以 "款号-" 开头
+            val matchedStyle = knownStyleNos.find { colorStr.startsWith("$it-") }
+
+            if (matchedStyle != null) {
+                // 如果匹配到了，精准截取后面的颜色
+                list.add(
+                    CombinedRowInputData(
+                        styleNo = matchedStyle,
+                        color = colorStr.substring(matchedStyle.length + 1),
+                        quantities = row.quantities.toMutableMap()
+                    )
+                )
+            } else {
+                // 如果没匹配到（可能是老数据或手动修改的），退化为找第一个横杠
+                val hyphenIndex = colorStr.indexOf("-")
+                if (hyphenIndex > 0) {
+                    list.add(
+                        CombinedRowInputData(
+                            styleNo = colorStr.substring(0, hyphenIndex),
+                            color = colorStr.substring(hyphenIndex + 1),
+                            quantities = row.quantities.toMutableMap()
+                        )
+                    )
+                } else {
+                    // 连横杠都没有，直接当颜色处理
+                    list.add(CombinedRowInputData(styleNo = "", color = colorStr, quantities = row.quantities.toMutableMap()))
+                }
+            }
+        }
+        list
+    }
+
+    val selectedColorsOrder = remember(editingOrder) {
+        val list = mutableStateListOf<String>()
+        rowList.forEach { if (!list.contains(it.color)) list.add(it.color) }
+        list
+    }
+
+    // 云端发号逻辑（保持不变）
+    val scope = rememberCoroutineScope()
+    var isFetchingBedNo by remember { mutableStateOf(false) }
+
+    fun fetchCloudBedNo() {
+        isFetchingBedNo = true
+        scope.launch {
+            try {
+                val res = NetworkClient.api.getNextBedNo(dateStr.take(5))
+                bedNo = res["bedNo"] ?: ""
+            } catch (e: Exception) {
+                Toast.makeText(context, "获取云端床号失败，请检查网络！", Toast.LENGTH_LONG).show()
+            } finally {
+                isFetchingBedNo = false
+            }
         }
     }
 
+    LaunchedEffect(dateStr) {
+        if (editingOrder == null) { // 👈 只有新建时才去云端拿号
+            fetchCloudBedNo()
+        }
+    }
     // 弹窗状态
     var showSelectSizeDialog by remember { mutableStateOf(false) }
     var tempSelectedSizes by remember { mutableStateOf(listOf<String>()) }
     var newSizeText by remember { mutableStateOf("") }
-
     var showSelectColorDialog by remember { mutableStateOf(false) }
     var tempSelectedColors by remember { mutableStateOf(setOf<String>()) }
     var newColorInput by remember { mutableStateOf("") }
 
-    // 👇 锁定字体大小
+
     CompositionLocalProvider(LocalDensity provides Density(LocalDensity.current.density, fontScale = 1f)) {
         Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()).imePadding()) {
 
-            // 1. 套排款号输入框
             OutlinedTextField(
                 value = topStyleNoText,
                 onValueChange = { topStyleNoText = it },
@@ -1447,17 +1693,31 @@ fun CombinedGenerateScreen(historyOrders: List<CutOrderData>, onGenerate: (CutOr
             )
             Spacer(Modifier.height(8.dp))
 
-            // 2. 客户和床号
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(customer, { customer = it }, label = { Text("客户") }, modifier = Modifier.weight(1f), singleLine = true)
-                OutlinedTextField(bedNo, { bedNo = it }, label = { Text("床号") }, modifier = Modifier.weight(1f), singleLine = true)
+
+                // 带刷新按钮的床号输入框
+                Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = bedNo,
+                        onValueChange = { bedNo = it },
+                        label = { Text("床号") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        trailingIcon = {
+                            if (isFetchingBedNo) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                            } else {
+                                TextButton(onClick = { fetchCloudBedNo() }) { Text("刷新", fontSize = 12.sp) }
+                            }
+                        }
+                    )
+                }
             }
             Spacer(Modifier.height(8.dp))
 
-            // 3. 日期
             OutlinedTextField(dateStr, { dateStr = it }, label = { Text("日期") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
 
-            // 4. 连床编菲
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { continuousBundle = !continuousBundle }) {
                     Checkbox(checked = continuousBundle, onCheckedChange = { continuousBundle = it })
@@ -1466,7 +1726,6 @@ fun CombinedGenerateScreen(historyOrders: List<CutOrderData>, onGenerate: (CutOr
             }
             Spacer(Modifier.height(8.dp))
 
-            // 5. 多图展示区
             if (imageList.isNotEmpty() || imageList.size < 5) {
                 LazyRow(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(imageList.size) { index ->
@@ -1492,7 +1751,6 @@ fun CombinedGenerateScreen(historyOrders: List<CutOrderData>, onGenerate: (CutOr
             }
             Spacer(Modifier.height(16.dp))
 
-            // 6. 第一行：标题 + 行复制
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text("套排明细 (款号+颜色)", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { enableAutoCopy = !enableAutoCopy }) {
@@ -1502,7 +1760,6 @@ fun CombinedGenerateScreen(historyOrders: List<CutOrderData>, onGenerate: (CutOr
                 }
             }
 
-            // 7. 第二行：靠右的按钮
             Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
                 Button(
                     onClick = { tempSelectedColors = emptySet(); showSelectColorDialog = true },
@@ -1519,7 +1776,6 @@ fun CombinedGenerateScreen(historyOrders: List<CutOrderData>, onGenerate: (CutOr
 
             Spacer(Modifier.height(8.dp))
 
-            // 已选颜色标签栏
             if (selectedColorsOrder.isNotEmpty()) {
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     selectedColorsOrder.forEach { color ->
@@ -1528,7 +1784,6 @@ fun CombinedGenerateScreen(historyOrders: List<CutOrderData>, onGenerate: (CutOr
                 }
             }
 
-            // 表头
             if (selectedSizes.value.isNotEmpty() || rowList.isNotEmpty()) {
                 Row(Modifier.fillMaxWidth().background(Color(0xFFF0F0F0)).padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text("款号", modifier = Modifier.weight(1.2f), textAlign = TextAlign.Center, fontSize = 12.sp, fontWeight = FontWeight.Bold)
@@ -1538,92 +1793,36 @@ fun CombinedGenerateScreen(historyOrders: List<CutOrderData>, onGenerate: (CutOr
                 }
             }
 
-            // 表格内容
             rowList.forEachIndexed { index, row ->
                 Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                     var expanded by remember { mutableStateOf(false) }
 
-                    // 款号输入框（带下拉）
                     Box(modifier = Modifier.weight(1.2f)) {
-                        var expanded by remember { mutableStateOf(false) }
-
                         AutoFitWrappedBasicTextField(
                             value = row.styleNo,
                             onValueChange = { newVal -> rowList[index] = row.copy(styleNo = newVal) },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(min = 36.dp)   // ← 关键
-                                .border(1.dp, Color(0xFFFF9800), MaterialTheme.shapes.extraSmall),
-                            maxFontSize = 14.sp,
-                            minFontSize = 10.sp,
-                            maxPreferredLines = 3,
-                            onFocusChanged = { focusState ->
-                                if (focusState.isFocused && parsedStyleNos.isNotEmpty()) expanded = true
-                            }
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 36.dp).border(1.dp, Color(0xFFFF9800), MaterialTheme.shapes.extraSmall),
+                            maxFontSize = 14.sp, minFontSize = 10.sp, maxPreferredLines = 3,
+                            onFocusChanged = { focusState -> if (focusState.isFocused && parsedStyleNos.isNotEmpty()) expanded = true }
                         )
-
-                        DropdownMenu(
-                            expanded = expanded,
-                            onDismissRequest = { expanded = false },
-                            modifier = Modifier.background(Color.White)
-                        ) {
+                        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, modifier = Modifier.background(Color.White)) {
                             parsedStyleNos.forEach { style ->
                                 DropdownMenuItem(
                                     text = { Text(style, fontSize = 14.sp) },
-                                    onClick = {
-                                        rowList[index] = row.copy(styleNo = style)
-                                        expanded = false
-                                        focusManager.clearFocus()
-                                    }
+                                    onClick = { rowList[index] = row.copy(styleNo = style); expanded = false; focusManager.clearFocus() }
                                 )
                             }
                         }
                     }
                     Spacer(Modifier.width(4.dp))
-//                    Box(modifier = Modifier.weight(1.2f)) {
-//                        BasicTextField(
-//                            value = row.styleNo,
-//                            onValueChange = { newVal -> rowList[index] = row.copy(styleNo = newVal) },
-//                            textStyle = androidx.compose.ui.text.TextStyle(textAlign = TextAlign.Center, fontSize = 14.sp, color = Color.Black),
-//                            singleLine = true,
-//                            modifier = Modifier.fillMaxWidth().height(36.dp).border(1.dp, Color(0xFFFF9800), MaterialTheme.shapes.extraSmall).onFocusChanged { focusState ->
-//                                if (focusState.isFocused && parsedStyleNos.isNotEmpty()) expanded = true
-//                            },
-//                            decorationBox = { innerTextField -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { innerTextField() } }
-//                        )
-//                        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, modifier = Modifier.background(Color.White)) {
-//                            parsedStyleNos.forEach { style ->
-//                                DropdownMenuItem(
-//                                    text = { Text(style, fontSize = 14.sp) },
-//                                    onClick = { rowList[index] = row.copy(styleNo = style); expanded = false; focusManager.clearFocus() }
-//                                )
-//                            }
-//                        }
-//                    }
-//                    Spacer(Modifier.width(4.dp))
 
-                    // 颜色输入框
                     AutoFitWrappedBasicTextField(
                         value = row.color,
                         onValueChange = { newVal -> rowList[index] = row.copy(color = newVal) },
-                        modifier = Modifier
-                            .weight(1.2f)
-                            .heightIn(min = 36.dp)   // ← 关键
-                            .border(1.dp, Color(0xFFFF9800), MaterialTheme.shapes.extraSmall),
-                        maxFontSize = 14.sp,
-                        minFontSize = 10.sp,
-                        maxPreferredLines = 3
+                        modifier = Modifier.weight(1.2f).heightIn(min = 36.dp).border(1.dp, Color(0xFFFF9800), MaterialTheme.shapes.extraSmall),
+                        maxFontSize = 14.sp, minFontSize = 10.sp, maxPreferredLines = 3
                     )
-//                    BasicTextField(
-//                        value = row.color,
-//                        onValueChange = { newVal -> rowList[index] = row.copy(color = newVal) },
-//                        textStyle = androidx.compose.ui.text.TextStyle(textAlign = TextAlign.Center, fontSize = 14.sp, color = Color.Black),
-//                        singleLine = true,
-//                        modifier = Modifier.weight(1.2f).height(36.dp).border(1.dp, Color(0xFFFF9800), MaterialTheme.shapes.extraSmall),
-//                        decorationBox = { innerTextField -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { innerTextField() } }
-//                    )
 
-                    // 各码数件数
                     selectedSizes.value.forEachIndexed { colIndex, size ->
                         val currentKey = "$size-$colIndex"
                         BasicTextField(
@@ -1644,7 +1843,7 @@ fun CombinedGenerateScreen(historyOrders: List<CutOrderData>, onGenerate: (CutOr
                             singleLine = true,
                             textStyle = androidx.compose.ui.text.TextStyle(textAlign = TextAlign.Center, fontSize = 16.sp, color = Color.Black),
                             modifier = Modifier.weight(1f).padding(horizontal = 2.dp).height(36.dp).border(1.dp, Color(0xFFFF9800), MaterialTheme.shapes.extraSmall),
-                            decorationBox = { innerTextField -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { innerTextField() } }
+                            decorationBox = { innerTextField -> Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { innerTextField() } }
                         )
                     }
                     IconButton({ rowList.removeAt(index) }, modifier = Modifier.width(36.dp)) { Text("X", color = Color.Red, fontWeight = FontWeight.Bold) }
@@ -1653,64 +1852,84 @@ fun CombinedGenerateScreen(historyOrders: List<CutOrderData>, onGenerate: (CutOr
 
             Spacer(Modifier.height(24.dp))
 
-            // 生成按钮
-            Button(
-                onClick = {
-                    if (bedNo.isBlank()) { Toast.makeText(context, "床号不能为空", Toast.LENGTH_SHORT).show(); return@Button }
-                    if (selectedSizes.value.isEmpty()) { Toast.makeText(context, "请先选择码数", Toast.LENGTH_SHORT).show(); return@Button }
-                    if (rowList.isEmpty()) { Toast.makeText(context, "请添加明细行", Toast.LENGTH_SHORT).show(); return@Button }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (editingOrder != null) {
+                    OutlinedButton(
+                        onClick = onCancelEdit,
+                        modifier = Modifier.weight(1f).height(48.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.Gray)
+                    ) { Text("取消编辑", fontSize = 16.sp) }
+                }
 
-                    val cutId = "C" + System.currentTimeMillis()
-                    val newTickets = mutableListOf<TicketData>()
-                    var totalQty = 0
-                    var globalBundleNo = 1
-                    if (continuousBundle) {
-                        val currentMonthPrefix = dateStr.take(5)
-                        val targetStyleNos = rowList.map { it.styleNo }.filter { it.isNotBlank() }
-                        val prevOrders = historyOrders.filter { order ->
-                            order.dateStr.startsWith(currentMonthPrefix) && targetStyleNos.any { style -> order.styleNo.contains(style) }
-                        }
-                        if (prevOrders.isNotEmpty()) {
-                            val maxBundle = prevOrders.maxOfOrNull { it.tickets.maxOfOrNull { t -> t.bundleNo } ?: 0 } ?: 0
-                            globalBundleNo = maxBundle + 1
-                        }
-                    }
+                Button(
+                    onClick = {
+                        if (bedNo.isBlank()) { Toast.makeText(context, "床号不能为空", Toast.LENGTH_SHORT).show(); return@Button }
+                        if (selectedSizes.value.isEmpty()) { Toast.makeText(context, "请先选择码数", Toast.LENGTH_SHORT).show(); return@Button }
+                        if (rowList.isEmpty()) { Toast.makeText(context, "请添加明细行", Toast.LENGTH_SHORT).show(); return@Button }
 
-                    val rowBundles = mutableMapOf<Int, MutableMap<Int, Int>>()
-                    selectedSizes.value.forEachIndexed { colIndex, size ->
-                        rowList.forEachIndexed { rowIdx, row ->
-                            val qty = row.quantities["$size-$colIndex"]?.toIntOrNull() ?: 0
-                            if (row.color.isNotBlank() && row.styleNo.isNotBlank() && qty > 0) {
-                                rowBundles.getOrPut(rowIdx) { mutableMapOf() }[colIndex] = globalBundleNo
-                                val no = "${row.styleNo}-$size-" + String.format("%02d", globalBundleNo)
-                                newTickets.add(TicketData(no, cutId, customer, row.styleNo, bedNo, dateStr, row.color, size, qty, globalBundleNo))
-                                totalQty += qty
-                                globalBundleNo++
+                        val cutId = editingOrder?.id ?: ("C" + System.currentTimeMillis())
+                        val newTickets = mutableListOf<TicketData>()
+                        var totalQty = 0
+                        var globalBundleNo = 1
+                        if (continuousBundle && editingOrder == null) {
+                            val currentMonthPrefix = dateStr.take(5)
+                            val targetStyleNos = rowList.map { it.styleNo }.filter { it.isNotBlank() }
+                            val prevOrders = historyOrders.filter { order ->
+                                order.dateStr.startsWith(currentMonthPrefix) && targetStyleNos.any { style -> order.styleNo.contains(style) }
+                            }
+                            if (prevOrders.isNotEmpty()) {
+                                val maxBundle = prevOrders.maxOfOrNull { it.tickets.maxOfOrNull { t -> t.bundleNo } ?: 0 } ?: 0
+                                globalBundleNo = maxBundle + 1
                             }
                         }
-                    }
 
-                    if (newTickets.isNotEmpty()) {
-                        val finalTickets = newTickets.map { it.copy(totalBundles = newTickets.size, totalQuantity = totalQty) }
-                        val finalRawRows = rowList.map { RowInputData(color = "${it.styleNo}-${it.color}", quantities = it.quantities.toMutableMap()) }
-                        val combinedStyleNo = rowList.map { it.styleNo }.filter { it.isNotBlank() }.distinct().joinToString(",")
-                        val finalImageBase64 = if (imageList.isEmpty()) null else Gson().toJson(imageList)
+                        val rowBundles = mutableMapOf<Int, MutableMap<Int, Int>>()
+                        selectedSizes.value.forEachIndexed { colIndex, size ->
+                            rowList.forEachIndexed { rowIdx, row ->
+                                val qty = row.quantities["$size-$colIndex"]?.toIntOrNull() ?: 0
+                                if (row.color.isNotBlank() && row.styleNo.isNotBlank() && qty > 0) {
+                                    rowBundles.getOrPut(rowIdx) { mutableMapOf() }[colIndex] = globalBundleNo
+                                    val no = "${row.styleNo}-$size-" + String.format("%02d", globalBundleNo)
+                                    newTickets.add(TicketData(no, cutId, customer, row.styleNo, bedNo, dateStr, row.color, size, qty, globalBundleNo))
+                                    totalQty += qty
+                                    globalBundleNo++
+                                }
+                            }
+                        }
 
-                        onGenerate(CutOrderData(cutId, customer, combinedStyleNo, bedNo, dateStr, System.currentTimeMillis(), totalQty, finalTickets, selectedSizes.value, finalRawRows, rowBundles, finalImageBase64))
-                        Toast.makeText(context, "已保存：${finalTickets.size}张", Toast.LENGTH_SHORT).show()
+                        if (newTickets.isNotEmpty()) {
+                            val finalTickets = newTickets.map { it.copy(totalBundles = newTickets.size, totalQuantity = totalQty) }
+                            val finalRawRows = rowList.map { RowInputData(color = "${it.styleNo}-${it.color}", quantities = it.quantities.toMutableMap()) }
+                            val combinedStyleNo = rowList.map { it.styleNo }.filter { it.isNotBlank() }.distinct().joinToString(",")
+                            val finalImageBase64 = if (imageList.isEmpty()) null else Gson().toJson(imageList)
+                            val time = editingOrder?.time ?: System.currentTimeMillis()
 
-                        rowList.clear(); selectedColorsOrder.clear(); continuousBundle = false; imageList.clear(); topStyleNoText = ""
-                    } else {
-                        Toast.makeText(context, "没有有效件数（请检查款号、颜色、件数）", Toast.LENGTH_SHORT).show()
-                    }
-                },
-                modifier = Modifier.fillMaxWidth().height(48.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1565C0))
-            ) { Text("生成套排裁床单", fontSize = 16.sp) }
+                            onGenerate(CutOrderData(
+                                cutId, customer, combinedStyleNo,
+                                bedNo, dateStr, time, totalQty,
+                                finalTickets, selectedSizes.value,
+                                finalRawRows, rowBundles,
+                                finalImageBase64))
+                            Toast.makeText(
+                                context,
+                                if (editingOrder != null) "已修改保存" else "已保存：${finalTickets.size}张",
+                                Toast.LENGTH_SHORT).show()
+
+                            if (editingOrder == null) {
+                                rowList.clear(); selectedColorsOrder.clear(); continuousBundle = false; imageList.clear(); topStyleNoText = ""
+                            }
+                        } else {
+                            Toast.makeText(context, "没有有效件数（请检查款号、颜色、件数）", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    modifier = Modifier.weight(if (editingOrder != null) 2f else 1f).height(48.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1565C0))
+                ) { Text(if (editingOrder != null) "保存修改" else "生成套排裁床单", fontSize = 16.sp) }
+            }
         }
     }
 
-    // ===== 弹窗部分 =====
+    // 弹窗部分（保持你原来的代码不变）
     if (showImageSourceDialog) {
         AlertDialog(
             onDismissRequest = { showImageSourceDialog = false },
@@ -1816,12 +2035,16 @@ fun CombinedGenerateScreen(historyOrders: List<CutOrderData>, onGenerate: (CutOr
                     }
                 }
             },
-            confirmButton = { Button(onClick = { selectedSizes.value = tempSelectedSizes; showSelectSizeDialog = false }) { Text("确定") } },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        selectedSizes.value = tempSelectedSizes;
+                        showSelectSizeDialog = false }) { Text("确定") }
+            },
             dismissButton = { TextButton({ showSelectSizeDialog = false }) { Text("取消") } }
         )
     }
 }
-
 // 👇 确保这个数据类在你的代码最外层
 data class CombinedRowInputData(
     val styleNo: String = "",
